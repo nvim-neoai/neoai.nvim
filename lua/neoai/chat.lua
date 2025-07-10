@@ -247,13 +247,13 @@ function M.setup_keymaps()
 		":lua require('neoai.chat').send_message()<CR>",
 		{ noremap = true, silent = true }
 	)
-	vim.api.nvim_buf_set_keymap(
-		chat_state.buffers.input,
-		"i",
-		"<CR>",
-		"<Esc>:lua require('neoai.chat').send_message()<CR>",
-		{ noremap = true, silent = true }
-	)
+	-- vim.api.nvim_buf_set_keymap(
+	-- 	chat_state.buffers.input,
+	-- 	"i",
+	-- 	"<CR>",
+	-- 	"<Esc>:lua require('neoai.chat').send_message()<CR>",
+	-- 	{ noremap = true, silent = true }
+	-- )
 	vim.api.nvim_buf_set_keymap(
 		chat_state.buffers.input,
 		"n",
@@ -586,7 +586,13 @@ function M.update_thinking_display()
 	for i = start_idx, #thinking_steps do
 		local step = thinking_steps[i]
 		table.insert(lines, "Step " .. step.step .. " [" .. step.timestamp .. "]:")
-		table.insert(lines, "  " .. step.content)
+
+		-- ✅ SAFELY add multiline content
+		local content_lines = vim.split(step.content, "\n", { plain = true })
+		for _, line in ipairs(content_lines) do
+			table.insert(lines, "  " .. line)
+		end
+
 		table.insert(lines, "")
 	end
 
