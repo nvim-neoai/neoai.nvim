@@ -52,9 +52,9 @@ config.defaults = {
   },
   -- API settings
   api = {
-    url = "https://api.groq.com/openai/v1/chat/completions",
-    api_key = os.getenv("GROQ_API_KEY") or "<your api key>", -- Support environment variables
-    model = "deepseek-r1-distill-llama-70b",
+    url = "your-api-url-here",
+    api_key = os.getenv("AI_API_KEY") or "<your api key>", -- Support environment variables
+    model = "your-ai-model-here",
     temperature = 0.4,
     max_completion_tokens = 4096,
     top_p = 0.9,

@@ -110,7 +110,7 @@ require("neoai").setup({
 ```lua
 -- Use OpenAI preset
 require("neoai").setup({
-  presets = "openai",
+  preset = "openai",
   api = { api_key = "your-openai-key" },
 })
 ```
@@ -118,7 +118,7 @@ require("neoai").setup({
 ```lua
 -- Use Ollama (local) preset
 require("neoai").setup({
-  presets = "ollama",
+  preset = "ollama",
 })
 ```
 
@@ -169,7 +169,7 @@ Keymaps are configured in the setup function under the `keymaps` field. See `lua
 
 ```lua
 require("neoai").setup({
-  presets = "groq",
+  preset = "groq",
   api = {
     api_key = "your-groq-api-key",
   },
@@ -180,7 +180,7 @@ require("neoai").setup({
 
 ```lua
 require("neoai").setup({
-  presets = "openai",
+  preset = "openai",
   api = {
     api_key = "your-openai-api-key",
   },
@@ -191,7 +191,7 @@ require("neoai").setup({
 
 ```lua
 require("neoai").setup({
-  presets = "anthropic",
+  preset = "anthropic",
   api = {
     api_key = "your-anthropic-api-key",
   },
@@ -206,7 +206,7 @@ require("neoai").setup({
 
 ```lua
 require("neoai").setup({
-  presets = "ollama",
+  preset = "ollama",
 })
 ```
 
