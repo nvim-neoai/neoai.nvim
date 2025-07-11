@@ -122,6 +122,36 @@ require("neoai").setup({
 })
 ```
 
+### Customizing API Key Header/Format
+
+Some providers require a custom API key header or format. You can set these fields in your config or preset:
+
+```lua
+require("neoai").setup({
+  api = {
+    api_key = "your-key-here",
+    api_key_header = "x-api-key",      -- For Anthropic
+    api_key_format = "%s",             -- For Anthropic (no Bearer)
+    -- ...other fields...
+  },
+})
+```
+
+Or, when using a preset (Anthropic example):
+
+```lua
+require("neoai").setup({
+  preset = "anthropic",
+  api = {
+    api_key = "your-anthropic-api-key",
+    -- api_key_header and api_key_format are set by the preset
+  },
+})
+```
+
+- `api_key_header` (default: `"Authorization"`): The HTTP header name for the API key.
+- `api_key_format` (default: `"Bearer %s"`): The format string for the API key value. Use `"%s"` for plain keys.
+
 ## Usage
 
 ### Commands

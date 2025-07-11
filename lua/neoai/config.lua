@@ -54,6 +54,8 @@ config.defaults = {
   api = {
     url = "your-api-url-here",
     api_key = os.getenv("AI_API_KEY") or "<your api key>", -- Support environment variables
+    api_key_header = "Authorization", -- Default header
+    api_key_format = "Bearer %s",    -- Default format
     model = "your-ai-model-here",
     temperature = 0.4,
     max_completion_tokens = 4096,
@@ -99,6 +101,8 @@ config.defaults = {
       api = {
         url = "https://api.anthropic.com/v1/messages",
         api_key = os.getenv("ANTHROPIC_API_KEY") or "<your api key>",
+        api_key_header = "x-api-key",
+        api_key_format = "%s",
         model = "claude-3-sonnet-20240229",
         temperature = 0.2,
       },

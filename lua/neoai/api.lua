@@ -19,7 +19,10 @@ function api.stream(messages, on_chunk, on_complete, on_error)
     messages = messages,
   })
 
-  local api_key = "Authorization: Bearer " .. conf.api_key
+  local api_key_header = conf.api_key_header or "Authorization"
+  local api_key_format = conf.api_key_format or "Bearer %s"
+  local api_key_value = string.format(api_key_format, conf.api_key)
+  local api_key = api_key_header .. ": " .. api_key_value
 
   Job:new({
     command = "curl",
