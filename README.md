@@ -5,13 +5,13 @@ A powerful AI chat interface for Neovim with message history, thinking process v
 ## Features
 
 - **Interactive Chat UI**: Full-featured chat interface with floating windows
-- **Message History**: Persistent conversation history with automatic saving
+- **Message History**: Persistent conversation history with automatic saving and instant clearing
 - **Thinking Process**: See how the AI processes your requests step by step
 - **Streaming Responses**: Real-time response streaming for better user experience
 - **Multiple AI Providers**: Support for OpenAI, Groq, Anthropic, and local models
 - **Syntax Highlighting**: Beautiful syntax highlighting for chat messages
 - **Session Management**: Create new sessions, save/load history
-- **Customizable UI**: Configurable window size, borders, and keymaps
+- **Customizable UI**: Configurable window size and keymaps
 
 ## Installation
 
@@ -19,13 +19,14 @@ A powerful AI chat interface for Neovim with message history, thinking process v
 
 ```lua
 {
-  "your-username/neoai.nvim",
+  "PhoneMinThu/neoai.nvim",
   dependencies = {
     "nvim-lua/plenary.nvim",
   },
   config = function()
     require("neoai").setup({
       api = {
+        preset = "chosen-preset-here",
         api_key = "your-api-key-here",
       },
     })
@@ -37,11 +38,12 @@ A powerful AI chat interface for Neovim with message history, thinking process v
 
 ```lua
 use {
-  "your-username/neoai.nvim",
+  "PhoneMinThu/neoai.nvim",
   requires = { "nvim-lua/plenary.nvim" },
   config = function()
     require("neoai").setup({
       api = {
+        preset = "chosen-preset-here",
         api_key = "your-api-key-here",
       },
     })
@@ -56,6 +58,7 @@ use {
 ```lua
 require("neoai").setup({
   api = {
+    url = "your-api-url-here",
     api_key = "your-api-key-here",
     model = "deepseek-r1-distill-llama-70b",
     temperature = 0.4,
@@ -63,8 +66,6 @@ require("neoai").setup({
   chat = {
     window = {
       width = 80,
-      height = 30,
-      border = "rounded",
     },
     show_thinking = true,
     auto_scroll = true,
@@ -85,22 +86,18 @@ require("neoai").setup({
     max_completion_tokens = 4096,
     top_p = 0.9,
   },
-  
+
   -- Chat UI settings
   chat = {
     window = {
       width = 80,
-      height = 30,
-      border = "rounded", -- "none", "single", "double", "rounded", "solid", "shadow"
-      title = " NeoAI Chat ",
-      title_pos = "center",
     },
-    
+
     -- History settings
     history_limit = 100,
     save_history = true,
     history_file = vim.fn.stdpath("data") .. "/neoai_chat_history.json",
-    
+
     -- Display settings
     show_thinking = true,
     auto_scroll = true,
@@ -111,18 +108,18 @@ require("neoai").setup({
 ### Using Presets
 
 ```lua
--- Use OpenAI
-require("neoai.config").setup(
-  vim.tbl_deep_extend("force", 
-    require("neoai.config").presets.openai, 
-    { api = { api_key = "your-openai-key" } }
-  )
-)
+-- Use OpenAI preset
+require("neoai").setup({
+  presets = "openai",
+  api = { api_key = "your-openai-key" },
+})
+```
 
--- Use Ollama (local)
-require("neoai.config").setup(
-  require("neoai.config").presets.ollama
-)
+```lua
+-- Use Ollama (local) preset
+require("neoai").setup({
+  presets = "ollama",
+})
 ```
 
 ## Usage
@@ -131,57 +128,35 @@ require("neoai.config").setup(
 
 - `:NeoAIChat` - Open the chat interface
 - `:NeoAIChatToggle` - Toggle chat interface
-- `:NeoAIChatClear` - Clear chat history
+- `:NeoAIChatClear` - Clear chat history (history file is updated immediately)
 - `:NeoAIChatSave` - Save chat history
 - `:NeoAIChatLoad` - Load chat history
-- `:AI <message>` - Send message directly (streaming)
-- `:AINORMAL <message>` - Send message directly (non-streaming)
 
 ### Keymaps
 
-**In Chat Interface:**
-- `<Enter>` - Send message
-- `<C-c>` or `q` - Close chat
-- `<C-n>` - New session
-- `<C-s>` - Save history
+**Default Keymaps:**
 
-**Example Keymaps:**
-```lua
-vim.keymap.set("n", "<leader>ai", ":NeoAIChat<CR>", { desc = "Open NeoAI Chat" })
-vim.keymap.set("n", "<leader>at", ":NeoAIChatToggle<CR>", { desc = "Toggle NeoAI Chat" })
-vim.keymap.set("n", "<leader>ac", ":NeoAIChatClear<CR>", { desc = "Clear NeoAI Chat" })
-```
+- `<CR>` (Enter) — Send message (input box)
+- `<C-c>` — Close chat (input, chat, and thinking boxes)
+- `q` — Close chat (chat and thinking boxes)
+- `<leader>i` — New session (chat box)
+- `<C-s>` — Save history (chat box)
+
+Keymaps are configured in the setup function under the `keymaps` field. See `lua/neoai/config.lua` for all defaults.
 
 ### Chat Interface Layout
 
 ```
-┌─── NeoAI Chat ────────────────────────────────────────────────────────────┐
-│ === NeoAI Chat Session ===                                                │
-│ Session ID: 1704067200                                                    │
-│ Created: 2024-01-01 10:00:00                                             │
-│ Messages: 4                                                               │
-│                                                                           │
-│ User: 2024-01-01 10:00:05                                                │
-│   What is machine learning?                                              │
-│                                                                           │
-│ Assistant: 2024-01-01 10:00:07 (2s)                                      │
-│   Machine learning is a subset of artificial intelligence...            │
-│                                                                           │
-└───────────────────────────────────────────────────────────────────────────┘
-┌─── Thinking ──────────────────────────────────────────────────────────────┐
-│ === AI Thinking Process ===                                              │
-│                                                                           │
-│ Step 1 [2024-01-01 10:00:05]:                                           │
-│   Processing user message: What is machine learning?                     │
-│                                                                           │
-│ Step 2 [2024-01-01 10:00:05]:                                           │
-│   Preparing API request with 2 messages                                  │
-│                                                                           │
-└───────────────────────────────────────────────────────────────────────────┘
-┌─── Input (Press Enter to send, Ctrl+C to close) ─────────────────────────┐
-│                                                                           │
-│                                                                           │
-└───────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                       🧠 Chat Box                        │
+│  (Displays conversation history between user and AI)     │
+├──────────────────────────────────────────────────────────┤
+│                   💭 Thinking Box (optional)             │
+│     (Shows "thinking..." or internal AI reasoning)       │
+├──────────────────────────────────────────────────────────┤
+│                    ⌨️ Input Box                          │
+│       (User types message here and presses Enter)        │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ## API Provider Setup
@@ -194,10 +169,9 @@ vim.keymap.set("n", "<leader>ac", ":NeoAIChatClear<CR>", { desc = "Clear NeoAI C
 
 ```lua
 require("neoai").setup({
+  presets = "groq",
   api = {
-    url = "https://api.groq.com/openai/v1/chat/completions",
     api_key = "your-groq-api-key",
-    model = "deepseek-r1-distill-llama-70b",
   },
 })
 ```
@@ -206,10 +180,9 @@ require("neoai").setup({
 
 ```lua
 require("neoai").setup({
+  presets = "openai",
   api = {
-    url = "https://api.openai.com/v1/chat/completions",
     api_key = "your-openai-api-key",
-    model = "gpt-4-turbo-preview",
   },
 })
 ```
@@ -218,10 +191,9 @@ require("neoai").setup({
 
 ```lua
 require("neoai").setup({
+  presets = "anthropic",
   api = {
-    url = "https://api.anthropic.com/v1/messages",
     api_key = "your-anthropic-api-key",
-    model = "claude-3-sonnet-20240229",
   },
 })
 ```
@@ -234,11 +206,7 @@ require("neoai").setup({
 
 ```lua
 require("neoai").setup({
-  api = {
-    url = "http://localhost:11434/v1/chat/completions",
-    api_key = "not-needed",
-    model = "llama3.2",
-  },
+  presets = "ollama",
 })
 ```
 
@@ -247,13 +215,19 @@ require("neoai").setup({
 ### Message History
 
 - Automatically saves conversation history to `~/.local/share/nvim/neoai_chat_history.json`
-- Loads previous session on startup
+- Loads previous session on startup (creates a new session only if none exists)
+- Clearing chat history updates the file immediately
 - Supports multiple sessions
 - Configurable history limit
+### AI Context Window
+
+- Only the last 10 user/assistant messages are sent to the AI for context by default (configurable in code)
+- If you want the AI to always remember certain facts, increase this limit or add facts to the system prompt
 
 ### Thinking Process
 
 When `show_thinking` is enabled, you can see:
+
 - Message processing steps
 - API request preparation
 - Response streaming status
@@ -271,10 +245,12 @@ When `show_thinking` is enabled, you can see:
 ### Common Issues
 
 1. **API Key Not Set**
+
    - Make sure to set your API key in the configuration
    - Check that the key is valid and has proper permissions
 
 2. **Network Issues**
+
    - Verify internet connection
    - Check if the API endpoint is accessible
    - Try with a different model
@@ -316,6 +292,7 @@ MIT License - see LICENSE file for details
 ## Changelog
 
 ### v1.0.0
+
 - Initial release
 - Chat interface with floating windows
 - Message history with persistence

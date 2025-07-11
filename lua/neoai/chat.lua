@@ -1,7 +1,4 @@
-local M = {}
-
--- Dependencies
-local completion = require("completion")
+local chat = {}
 
 -- Chat state
 local chat_state = {
@@ -24,33 +21,22 @@ local MESSAGE_TYPES = {
 }
 
 -- Setup function
-function M.setup(config)
-  chat_state.config = vim.tbl_deep_extend("force", {
-    window = {
-      width = 80,
-      height = 30,
-      border = "rounded",
-      title = " NeoAI Chat ",
-      title_pos = "center",
-    },
-    history_limit = 100,
-    save_history = true,
-    history_file = vim.fn.stdpath("data") .. "/neoai_chat_history.json",
-    show_thinking = true,
-    auto_scroll = true,
-  }, config or {})
+function chat.setup()
+  chat_state.config = require("neoai.config").values.chat
 
   -- Load history on startup
   if chat_state.config.save_history then
-    M.load_history()
+    chat.load_history()
   end
 
-  -- Create new session
-  M.new_session()
+  -- Only create new session if none loaded from history
+  if not chat_state.current_session then
+    chat.new_session()
+  end
 end
 
 -- Create new chat session
-function M.new_session()
+function chat.new_session()
   chat_state.current_session = {
     id = os.time(),
     messages = {},
@@ -59,16 +45,16 @@ function M.new_session()
   }
 
   -- Add system message
-  M.add_message(MESSAGE_TYPES.SYSTEM, "NeoAI Chat Session Started", {
+  chat.add_message(MESSAGE_TYPES.SYSTEM, "NeoAI Chat Session Started", {
     timestamp = os.date("%Y-%m-%d %H:%M:%S"),
     session_id = chat_state.current_session.id,
   })
 end
 
 -- Add message to current session
-function M.add_message(type, content, metadata)
+function chat.add_message(type, content, metadata)
   if not chat_state.current_session then
-    M.new_session()
+    chat.new_session()
   end
 
   local message = {
@@ -82,19 +68,19 @@ function M.add_message(type, content, metadata)
 
   -- Update UI if open
   if chat_state.is_open then
-    M.update_chat_display()
+    chat.update_chat_display()
   end
 
   -- Auto-save if enabled
   if chat_state.config.save_history then
-    M.save_history()
+    chat.save_history()
   end
 end
 
 -- Add thinking step
-function M.add_thinking(content, step)
+function chat.add_thinking(content, step)
   if not chat_state.current_session then
-    M.new_session()
+    chat.new_session()
   end
 
   local thinking = {
@@ -107,190 +93,41 @@ function M.add_thinking(content, step)
 
   -- Update UI if open and thinking is enabled
   if chat_state.is_open and chat_state.config.show_thinking then
-    M.update_thinking_display()
+    chat.update_thinking_display()
   end
 end
 
 -- Open chat window
-function M.open()
-  if chat_state.is_open then
-    return
-  end
+function chat.open()
+  local ui = require("neoai.ui")
+  local keymaps = require("neoai.keymaps")
 
-  -- Create buffers
-  chat_state.buffers.chat = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(chat_state.buffers.chat, "neoai://chat")
-  vim.api.nvim_buf_set_option(chat_state.buffers.chat, "filetype", "neoai-chat")
-  vim.api.nvim_buf_set_option(chat_state.buffers.chat, "buftype", "nofile")
-  vim.api.nvim_buf_set_option(chat_state.buffers.chat, "bufhidden", "wipe")
-  vim.api.nvim_buf_set_option(chat_state.buffers.chat, "wrap", true)
+  ui.open(chat_state)
+  keymaps.setup(chat_state, MESSAGE_TYPES)
 
-  chat_state.buffers.input = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(chat_state.buffers.input, "neoai://input")
-  vim.api.nvim_buf_set_option(chat_state.buffers.input, "filetype", "neoai-input")
-  vim.api.nvim_buf_set_option(chat_state.buffers.input, "buftype", "nofile")
-  vim.api.nvim_buf_set_option(chat_state.buffers.input, "bufhidden", "wipe")
-
+  chat.update_chat_display()
   if chat_state.config.show_thinking then
-    chat_state.buffers.thinking = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_name(chat_state.buffers.thinking, "neoai://thinking")
-    vim.api.nvim_buf_set_option(chat_state.buffers.thinking, "filetype", "neoai-thinking")
-    vim.api.nvim_buf_set_option(chat_state.buffers.thinking, "buftype", "nofile")
-    vim.api.nvim_buf_set_option(chat_state.buffers.thinking, "bufhidden", "wipe")
-    vim.api.nvim_buf_set_option(chat_state.buffers.thinking, "wrap", true)
+    chat.update_thinking_display()
   end
-
-  -- Open vertical split at far right
-  vim.cmd("vsplit")
-  local vsplit_win = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_width(vsplit_win, chat_state.config.window.width or 80)
-
-  -- Use current win (vsplit) for chat
-  vim.api.nvim_win_set_buf(vsplit_win, chat_state.buffers.chat)
-  vim.api.nvim_set_option_value("winbar", " Chat ", { win = vsplit_win })
-  chat_state.windows.chat = vsplit_win
-
-  -- Split for thinking box (middle)
-  if chat_state.config.show_thinking then
-    vim.cmd("belowright split")
-    local thinking_win = vim.api.nvim_get_current_win()
-    vim.api.nvim_win_set_buf(thinking_win, chat_state.buffers.thinking)
-    vim.api.nvim_win_set_height(thinking_win, 8)
-    vim.api.nvim_set_option_value("winbar", " Thinking ", { win = thinking_win })
-    chat_state.windows.thinking = thinking_win
-  end
-
-  -- Split for input box (bottom)
-  vim.cmd("belowright split")
-  local input_win = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_buf(input_win, chat_state.buffers.input)
-  vim.api.nvim_win_set_height(input_win, 3)
-  vim.api.nvim_set_option_value("winbar", " Input (Enter to send) ", { win = input_win })
-  chat_state.windows.input = input_win
-
-  -- Set focus to input
-  vim.api.nvim_set_current_win(chat_state.windows.input)
-
-  -- Setup and render
-  M.setup_keymaps()
-  M.update_chat_display()
-  if chat_state.config.show_thinking then
-    M.update_thinking_display()
-  end
-  chat_state.is_open = true
 end
 
 -- Close chat window
-function M.close()
-  if not chat_state.is_open then
-    return
-  end
-
-  -- Close windows
-  for _, win in pairs(chat_state.windows) do
-    if vim.api.nvim_win_is_valid(win) then
-      vim.api.nvim_win_close(win, true)
-    end
-  end
-
-  -- Clear state
-  chat_state.windows = {}
-  chat_state.buffers = {}
-  chat_state.is_open = false
+function chat.close()
+  local ui = require("neoai.ui")
+  ui.close(chat_state)
 end
 
 -- Toggle chat window
-function M.toggle()
+function chat.toggle()
   if chat_state.is_open then
-    M.close()
+    chat.close()
   else
-    M.open()
-  end
-end
-
--- Setup key mappings
-function M.setup_keymaps()
-  -- Input buffer mappings
-  vim.api.nvim_buf_set_keymap(
-    chat_state.buffers.input,
-    "n",
-    "<CR>",
-    ":lua require('neoai.chat').send_message()<CR>",
-    { noremap = true, silent = true }
-  )
-  -- vim.api.nvim_buf_set_keymap(
-  -- 	chat_state.buffers.input,
-  -- 	"i",
-  -- 	"<CR>",
-  -- 	"<Esc>:lua require('neoai.chat').send_message()<CR>",
-  -- 	{ noremap = true, silent = true }
-  -- )
-  vim.api.nvim_buf_set_keymap(
-    chat_state.buffers.input,
-    "n",
-    "<C-c>",
-    ":lua require('neoai.chat').close()<CR>",
-    { noremap = true, silent = true }
-  )
-  vim.api.nvim_buf_set_keymap(
-    chat_state.buffers.input,
-    "i",
-    "<C-c>",
-    "<Esc>:lua require('neoai.chat').close()<CR>",
-    { noremap = true, silent = true }
-  )
-
-  -- Chat buffer mappings
-  vim.api.nvim_buf_set_keymap(
-    chat_state.buffers.chat,
-    "n",
-    "<C-c>",
-    ":lua require('neoai.chat').close()<CR>",
-    { noremap = true, silent = true }
-  )
-  vim.api.nvim_buf_set_keymap(
-    chat_state.buffers.chat,
-    "n",
-    "q",
-    ":lua require('neoai.chat').close()<CR>",
-    { noremap = true, silent = true }
-  )
-  vim.api.nvim_buf_set_keymap(
-    chat_state.buffers.chat,
-    "n",
-    "<C-n>",
-    ":lua require('neoai.chat').new_session()<CR>",
-    { noremap = true, silent = true }
-  )
-  vim.api.nvim_buf_set_keymap(
-    chat_state.buffers.chat,
-    "n",
-    "<C-s>",
-    ":lua require('neoai.chat').save_history()<CR>",
-    { noremap = true, silent = true }
-  )
-
-  -- Thinking buffer mappings (if enabled)
-  if chat_state.config.show_thinking and chat_state.buffers.thinking then
-    vim.api.nvim_buf_set_keymap(
-      chat_state.buffers.thinking,
-      "n",
-      "<C-c>",
-      ":lua require('neoai.chat').close()<CR>",
-      { noremap = true, silent = true }
-    )
-    vim.api.nvim_buf_set_keymap(
-      chat_state.buffers.thinking,
-      "n",
-      "q",
-      ":lua require('neoai.chat').close()<CR>",
-      { noremap = true, silent = true }
-    )
+    chat.open()
   end
 end
 
 -- Send message
-function M.send_message()
+function chat.send_message()
   if not chat_state.is_open then
     return
   end
@@ -304,22 +141,22 @@ function M.send_message()
   end
 
   -- Add user message
-  M.add_message(MESSAGE_TYPES.USER, message)
+  chat.add_message(MESSAGE_TYPES.USER, message)
 
   -- Clear input
   vim.api.nvim_buf_set_lines(chat_state.buffers.input, 0, -1, false, { "" })
 
   -- Send to AI
-  M.send_to_ai(message)
+  chat.send_to_ai(message)
 end
 
 -- Send message to AI
-function M.send_to_ai(message)
+function chat.send_to_ai(message)
   -- Build message history for API
   local messages = {}
 
   -- Add system prompt
-  local system_prompt = M.get_system_prompt()
+  local system_prompt = chat.get_system_prompt("system_prompt.md")
   table.insert(messages, {
     role = "system",
     content = system_prompt,
@@ -348,109 +185,62 @@ function M.send_to_ai(message)
   end
 
   -- Add thinking step
-  M.add_thinking("Processing user message: " .. message, 1)
-  M.add_thinking("Preparing API request with " .. #messages .. " messages", 2)
+  chat.add_thinking("Processing user message: " .. message, 1)
+  chat.add_thinking("Preparing API request with " .. #messages .. " messages", 2)
+
+  -- Insert placeholder for streaming response (fix for first message not streaming)
+  if chat_state.is_open then
+    local lines = vim.api.nvim_buf_get_lines(chat_state.buffers.chat, 0, -1, false)
+    table.insert(lines, "Assistant: " .. os.date("%H:%M:%S"))
+    table.insert(lines, "")
+    vim.api.nvim_buf_set_lines(chat_state.buffers.chat, 0, -1, false, lines)
+    if chat_state.config.auto_scroll then
+      chat.scroll_to_bottom(chat_state.buffers.chat)
+    end
+  end
 
   -- Call API with streaming
-  M.stream_ai_response(messages)
+  chat.stream_ai_response(messages)
 end
 
 -- Stream AI response
-function M.stream_ai_response(messages)
-  local Job = require("plenary.job")
-  local config = completion.config
+function chat.stream_ai_response(messages)
+  local api = require("neoai.api")
 
-  local payload = vim.fn.json_encode({
-    model = config.model,
-    temperature = config.temperature,
-    max_completion_tokens = config.max_completion_tokens,
-    top_p = config.top_p,
-    stream = true,
-    messages = messages,
-  })
-
-  local api_key = "Authorization: Bearer " .. config.api_key
-
-  -- Add thinking step
-  M.add_thinking("Starting streaming response from AI", 3)
-
-  -- Initialize response tracking
   local response_content = ""
   local response_start_time = os.time()
 
-  Job:new({
-    command = "curl",
-    args = {
-      "--silent",
-      "--no-buffer",
-      "--location",
-      config.url,
-      "--header",
-      "Content-Type: application/json",
-      "--header",
-      api_key,
-      "--data",
-      payload,
-    },
-    on_stdout = function(_, line)
-      for _, data_line in ipairs(vim.split(line, "\n")) do
-        if vim.startswith(data_line, "data: ") then
-          local chunk = data_line:sub(7)
-          if chunk ~= "[DONE]" then
-            vim.schedule(function()
-              local ok, decoded = pcall(vim.fn.json_decode, chunk)
-              if ok and decoded then
-                local delta = decoded.choices and decoded.choices[1] and decoded.choices[1].delta
-                local content = delta and delta.content
-                if content and content ~= "" then
-                  response_content = response_content .. content
+  chat.add_thinking("Starting streaming response from AI", 3)
 
-                  -- Update assistant message in real-time
-                  M.update_streaming_message(response_content)
-
-                  -- Add thinking step for significant chunks
-                  if #content > 10 then
-                    M.add_thinking("Received chunk: " .. content:sub(1, 50) .. "...", 4)
-                  end
-                end
-              end
-            end)
-          end
-        end
-      end
-    end,
-    on_exit = function(_, exit_code)
-      vim.schedule(function()
-        if exit_code == 0 and response_content ~= "" then
-          -- Add final assistant message
-          M.add_message(MESSAGE_TYPES.ASSISTANT, response_content, {
-            response_time = os.time() - response_start_time,
-          })
-
-          -- Add thinking step
-          M.add_thinking("Response completed successfully", 5)
-        else
-          -- Add error message
-          M.add_message(MESSAGE_TYPES.ERROR, "Failed to get response from AI", {
-            exit_code = exit_code,
-          })
-
-          -- Add thinking step
-          M.add_thinking("Response failed with exit code: " .. exit_code, 5)
-        end
-
-        -- Update display
-        M.update_chat_display()
-        if chat_state.config.show_thinking then
-          M.update_thinking_display()
-        end
-      end)
-    end,
-  }):start()
+  api.stream(messages, function(content)
+    response_content = response_content .. content
+    chat.update_streaming_message(response_content)
+    if #content > 10 then
+      chat.add_thinking("Received chunk: " .. content:sub(1, 50) .. "...", 4)
+    end
+  end, function()
+    chat.add_message(MESSAGE_TYPES.ASSISTANT, response_content, {
+      response_time = os.time() - response_start_time,
+    })
+    chat.add_thinking("Response completed successfully", 5)
+    chat.update_chat_display()
+    if chat_state.config.show_thinking then
+      chat.update_thinking_display()
+    end
+  end, function(exit_code)
+    chat.add_message(MESSAGE_TYPES.ERROR, "Failed to get response from AI", {
+      exit_code = exit_code,
+    })
+    chat.add_thinking("Response failed with exit code: " .. exit_code, 5)
+    chat.update_chat_display()
+    if chat_state.config.show_thinking then
+      chat.update_thinking_display()
+    end
+  end)
 end
 
 -- Update streaming message display
-function M.update_streaming_message(content)
+function chat.update_streaming_message(content)
   if not chat_state.is_open then
     return
   end
@@ -480,7 +270,7 @@ function M.update_streaming_message(content)
 
       -- Auto-scroll if enabled
       if chat_state.config.auto_scroll then
-        M.scroll_to_bottom(chat_state.buffers.chat)
+        chat.scroll_to_bottom(chat_state.buffers.chat)
       end
 
       break
@@ -489,7 +279,7 @@ function M.update_streaming_message(content)
 end
 
 -- Update chat display
-function M.update_chat_display()
+function chat.update_chat_display()
   if not chat_state.is_open or not chat_state.current_session then
     return
   end
@@ -534,12 +324,12 @@ function M.update_chat_display()
 
   -- Auto-scroll if enabled
   if chat_state.config.auto_scroll then
-    M.scroll_to_bottom(chat_state.buffers.chat)
+    chat.scroll_to_bottom(chat_state.buffers.chat)
   end
 end
 
 -- Update thinking display
-function M.update_thinking_display()
+function chat.update_thinking_display()
   if not chat_state.is_open or not chat_state.config.show_thinking or not chat_state.current_session then
     return
   end
@@ -572,12 +362,12 @@ function M.update_thinking_display()
 
   -- Auto-scroll if enabled
   if chat_state.config.auto_scroll then
-    M.scroll_to_bottom(chat_state.buffers.thinking)
+    chat.scroll_to_bottom(chat_state.buffers.thinking)
   end
 end
 
 -- Scroll to bottom of buffer
-function M.scroll_to_bottom(bufnr)
+function chat.scroll_to_bottom(bufnr)
   local line_count = vim.api.nvim_buf_line_count(bufnr)
   for _, win in pairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_get_buf(win) == bufnr then
@@ -587,29 +377,27 @@ function M.scroll_to_bottom(bufnr)
   end
 end
 
+local function get_plugin_dir()
+  local info = debug.getinfo(1, "S")
+  return info.source:sub(2):match("(.*/)")
+end
+
 -- Get system prompt
-function M.get_system_prompt()
-  local prompt = [[
-You are NeoAI, an AI assistant integrated into Neovim. You provide helpful, accurate, and concise responses to user queries.
-
-Key characteristics:
-- Be helpful and informative
-- Provide code examples when relevant
-- Explain complex concepts clearly
-- Be concise but thorough
-- Adapt to the user's level of expertise
-
-Current context:
-- Environment: Neovim plugin
-- Session: Chat interface
-- User can see your thinking process
-]]
-
+---@param path string
+function chat.get_system_prompt(path)
+  path = get_plugin_dir() .. path
+  local file, err = io.open(path, "r")
+  if not file then
+    print("Failed to open file:", err)
+    return nil
+  end
+  local prompt = file:read("*a")
+  file:close()
   return prompt
 end
 
 -- Clear chat history
-function M.clear_history()
+function chat.clear_history()
   if chat_state.current_session then
     chat_state.current_session.messages = {}
     chat_state.current_session.thinking = {}
@@ -617,17 +405,22 @@ function M.clear_history()
 
   -- Update display
   if chat_state.is_open then
-    M.update_chat_display()
+    chat.update_chat_display()
     if chat_state.config.show_thinking then
-      M.update_thinking_display()
+      chat.update_thinking_display()
     end
   end
 
   vim.notify("Chat history cleared")
+
+  -- Save cleared history immediately if enabled
+  if chat_state.config.save_history then
+    chat.save_history()
+  end
 end
 
 -- Save history to file
-function M.save_history()
+function chat.save_history()
   if not chat_state.config.save_history then
     return
   end
@@ -649,7 +442,7 @@ function M.save_history()
 end
 
 -- Load history from file
-function M.load_history()
+function chat.load_history()
   if not chat_state.config.save_history then
     return
   end
@@ -668,7 +461,7 @@ function M.load_history()
 end
 
 -- Get current session info
-function M.get_session_info()
+function chat.get_session_info()
   if not chat_state.current_session then
     return nil
   end
@@ -682,6 +475,6 @@ function M.get_session_info()
 end
 
 -- Export functions
-M.MESSAGE_TYPES = MESSAGE_TYPES
+chat.MESSAGE_TYPES = MESSAGE_TYPES
 
-return M
+return chat
