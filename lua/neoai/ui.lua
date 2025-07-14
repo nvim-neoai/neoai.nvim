@@ -1,8 +1,9 @@
 local ui = {}
+local chat_state = require("neoai.chat").chat_state
 
 --- Open NeoAI chat UI
----@param chat_state table Chat state containing buffers, windows, and configuration
-function ui.open(chat_state)
+function ui.open()
+
   if chat_state.is_open then
     return
   end

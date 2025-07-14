@@ -1,10 +1,17 @@
 local M = {}
+local keymaps = require("neoai.config").values.keymaps
 
 --- Setup key mappings
----@param chat_state table Chat state containing buffers and windows
----@param MESSAGE_TYPES table Message types used in chat
-function M.setup(chat_state, MESSAGE_TYPES)
-local keymaps = require("neoai.config").values.keymaps
+function M.setup()
+  -- Normal mappings
+  vim.keymap.set("n", keymaps.normal.open, ":NeoAIChat<CR>", { desc = "Open NeoAI Chat" })
+  vim.keymap.set("n", keymaps.normal.toggle, ":NeoAIChatToggle<CR>", { desc = "Toggle NeoAI Chat" })
+  vim.keymap.set("n", keymaps.normal.clear_history, ":NeoAIChatClear<CR>", { desc = "Clear NeoAI Chat" })
+end
+
+function M.buffer_setup()
+  local chat_state = require("neoai.chat").chat_state
+
   -- Input buffer mappings
   vim.api.nvim_buf_set_keymap(
     chat_state.buffers.input,
@@ -41,13 +48,6 @@ local keymaps = require("neoai.config").values.keymaps
     "n",
     keymaps.chat.close[2],
     ":lua require('neoai.chat').close()<CR>",
-    { noremap = true, silent = true }
-  )
-  vim.api.nvim_buf_set_keymap(
-    chat_state.buffers.chat,
-    "n",
-    keymaps.chat.new_session,
-    ":lua require('neoai.chat').new_session()<CR>",
     { noremap = true, silent = true }
   )
   vim.api.nvim_buf_set_keymap(

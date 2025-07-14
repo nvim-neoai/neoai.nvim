@@ -169,8 +169,10 @@ require("neoai").setup({
 - `<CR>` (Enter) — Send message (input box)
 - `<C-c>` — Close chat (input, chat, and thinking boxes)
 - `q` — Close chat (chat and thinking boxes)
-- `<leader>i` — New session (chat box)
 - `<C-s>` — Save history (chat box)
+- `<leader>ai` - Open Chat
+- `<leader>at` - Toggle Chat
+- `<leader>ac` - Clear History
 
 Keymaps are configured in the setup function under the `keymaps` field. See `lua/neoai/config.lua` for all defaults.
 

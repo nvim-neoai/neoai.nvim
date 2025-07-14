@@ -43,11 +43,15 @@ config.defaults = {
     },
     chat = {
       close = { "<C-c>", "q" },
-      new_session = "<leader>i",
       save_history = "<C-s>",
     },
     thinking = {
       close = { "<C-c>", "q" },
+    },
+    normal = {
+      open = "<leader>ai",
+      toggle = "<leader>at",
+      clear_history = "<leader>ac",
     },
   },
   -- API settings

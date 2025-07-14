@@ -16,13 +16,17 @@ function neoai.setup(opts)
 
   -- Create user commands
   neoai.create_commands()
+
+  require("neoai.ai_tools").setup()
+  require("neoai.keymaps").setup()
+
   return neoai.config
 end
 
 -- Create user commands
 function neoai.create_commands()
   local commands = require("neoai.commands")
-  commands.setup(chat)
+  commands.setup()
 end
 
 -- Expose modules
