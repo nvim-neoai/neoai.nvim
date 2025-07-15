@@ -73,7 +73,7 @@ config.defaults = {
     },
 
     -- History settings
-    history_limit = 100,
+    history_limit = 100, -- unused
     save_history = true,
     history_file = vim.fn.stdpath("data") .. "/neoai_chat_history.json",
 

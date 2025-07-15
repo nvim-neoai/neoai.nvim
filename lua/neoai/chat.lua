@@ -35,268 +35,18 @@ function chat.setup()
   end
 end
 
--- Create new chat session
-function chat.new_session()
-  chat.chat_state.current_session = {
-    id = os.time(),
-    messages = {},
-    thinking = {},
-    created_at = os.date("%Y-%m-%d %H:%M:%S"),
-  }
-
-  if chat.chat_state.is_open and chat.chat_state.config.show_thinking then
-    chat.update_thinking_display()
-  end
-
-  -- Add system message
-  chat.add_message(MESSAGE_TYPES.SYSTEM, "NeoAI Chat Session Started", {
-    session_id = chat.chat_state.current_session.id,
-  })
-end
-
--- Add message to current session
-function chat.add_message(type, content, metadata)
-  if not chat.chat_state.current_session then
-    chat.new_session()
-  end
-  metadata = metadata or {}
-  metadata["timestamp"] = os.date("%Y-%m-%d %H:%M:%S")
-
-  local message = {
-    type = type,
-    content = content,
-    metadata = metadata or {},
-  }
-
-  table.insert(chat.chat_state.current_session.messages, message)
-
-  -- Update UI if open
-  if chat.chat_state.is_open then
-    chat.update_chat_display()
-  end
-
-  -- Auto-save if enabled
-  if chat.chat_state.config.save_history then
-    chat.save_history()
-  end
-end
-
-function chat.start_thinking_block()
-  if not chat.chat_state.current_session then
-    chat.new_session()
-  end
-
-  table.insert(chat.chat_state.current_session.thinking, {
-    content = "",
-    timestamp = os.date("%Y-%m-%d %H:%M:%S"),
-  })
-end
-
-function chat.append_thinking_chunk(chunk)
-  if not chat.chat_state.current_session or #chat.chat_state.current_session.thinking == 0 then
-    return
-  end
-
-  local latest = chat.chat_state.current_session.thinking[#chat.chat_state.current_session.thinking]
-  latest.content = latest.content .. chunk
-
-  if chat.chat_state.is_open and chat.chat_state.config.show_thinking then
-    chat.update_thinking_display()
-  end
-end
-
-function chat.update_thinking_display()
-  if not chat.chat_state.is_open or not chat.chat_state.config.show_thinking then
-    return
-  end
-
-  local lines = {}
-  local blocks = chat.chat_state.current_session.thinking
-
-  for _, block in ipairs(blocks) do
-    table.insert(lines, "=== AI Thinking Process ===")
-    for _, line in ipairs(vim.split(block.content, "\n")) do
-      table.insert(lines, "  " .. line)
-    end
-    table.insert(lines, "")
-  end
-
-  vim.api.nvim_buf_set_lines(chat.chat_state.buffers.thinking, 0, -1, false, lines)
-
-  if chat.chat_state.config.auto_scroll then
-    chat.scroll_to_bottom(chat.chat_state.buffers.thinking)
-  end
-end
-
--- Open chat window
-function chat.open()
-  local ui = require("neoai.ui")
-  local keymaps = require("neoai.keymaps")
-
-  ui.open()
-  keymaps.buffer_setup()
-
-  chat.update_chat_display()
-  if chat.chat_state.config.show_thinking then
-    chat.update_thinking_display()
-  end
-end
-
--- Close chat window
-function chat.close()
-  local ui = require("neoai.ui")
-  ui.close(chat.chat_state)
-end
-
--- Toggle chat window
-function chat.toggle()
-  if chat.chat_state.is_open then
-    chat.close()
-  else
-    chat.open()
-  end
-end
-
--- Send message
-function chat.send_message()
-  if not chat.chat_state.is_open then
-    return
-  end
-
-  -- Get input
-  local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.input, 0, -1, false)
-  local message = table.concat(lines, "\n"):gsub("^%s*(.-)%s*$", "%1")
-
-  if message == "" then
-    return
-  end
-
-  -- Add user message
-  chat.add_message(MESSAGE_TYPES.USER, message)
-
-  -- Clear input
-  vim.api.nvim_buf_set_lines(chat.chat_state.buffers.input, 0, -1, false, { "" })
-
-  -- Send to AI
-  chat.send_to_ai()
-  chat.start_thinking_block()
-end
-
--- Send message to AI
-function chat.send_to_ai()
-  -- Build message history for API
-  local messages = {}
-
-  -- Add system prompt
-  local system_prompt = chat.get_system_prompt()
-  table.insert(messages, {
-    role = "system",
-    content = system_prompt,
-  })
-
-  -- Add conversation history (last 20 messages to avoid context limit)
-  local recent_messages = {}
-  local count = 0
-  for i = #chat.chat_state.current_session.messages, 1, -1 do
-    local msg = chat.chat_state.current_session.messages[i]
-    if msg.type == MESSAGE_TYPES.USER or msg.type == MESSAGE_TYPES.ASSISTANT then
-      table.insert(recent_messages, 1, msg)
-      count = count + 1
-      if count >= 20 then
-        break
-      end
-    end
-  end
-
-  -- Convert to API format
-  for _, msg in ipairs(recent_messages) do
-    table.insert(messages, {
-      role = msg.type,
-      content = msg.content,
-    })
-  end
-
-  -- Insert placeholder for streaming response (fix for first message not streaming)
-  if chat.chat_state.is_open then
-    local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.chat, 0, -1, false)
-    table.insert(lines, "Assistant: " .. os.date("%H:%M:%S"))
-    table.insert(lines, "")
-    vim.api.nvim_buf_set_lines(chat.chat_state.buffers.chat, 0, -1, false, lines)
-    if chat.chat_state.config.auto_scroll then
-      chat.scroll_to_bottom(chat.chat_state.buffers.chat)
-    end
-  end
-
-  -- Call API with streaming
-  chat.stream_ai_response(messages)
-end
-
--- Stream AI response
-function chat.stream_ai_response(messages)
-  local api = require("neoai.api")
-
-  local response_content = ""
-  local response_start_time = os.time()
-
-  api.stream(messages, function(content)
-    response_content = response_content .. content
-    chat.update_streaming_message(response_content)
-  end, function(reason_chunk)
-    chat.append_thinking_chunk(reason_chunk)
-  end, function(tool_calls) end, function()
-    chat.add_message(MESSAGE_TYPES.ASSISTANT, response_content, {
-      response_time = os.time() - response_start_time,
-    })
-    chat.update_chat_display()
-  end, function(exit_code)
-    chat.add_message(MESSAGE_TYPES.ERROR, "Failed to get response from AI", {
-      exit_code = exit_code,
-    })
-    chat.update_chat_display()
-  end)
-end
-
--- Update streaming message display
-function chat.update_streaming_message(content)
-  if not chat.chat_state.is_open then
-    return
-  end
-
-  -- Get current display lines
-  local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.chat, 0, -1, false)
-
-  -- Find the last "Assistant:" line and update it
-  for i = #lines, 1, -1 do
-    if lines[i]:match("^Assistant:") then
-      -- Replace lines from this point
-      local new_lines = {}
-      for j = 1, i - 1 do
-        table.insert(new_lines, lines[j])
-      end
-
-      -- Add streaming response
-      table.insert(new_lines, "Assistant: " .. os.date("%H:%M:%S"))
-      local content_lines = vim.split(content, "\n")
-      for _, line in ipairs(content_lines) do
-        table.insert(new_lines, "  " .. line)
-      end
-      table.insert(new_lines, "")
-
-      -- Update buffer
-      vim.api.nvim_buf_set_lines(chat.chat_state.buffers.chat, 0, -1, false, new_lines)
-
-      -- Auto-scroll if enabled
-      if chat.chat_state.config.auto_scroll then
-        chat.scroll_to_bottom(chat.chat_state.buffers.chat)
-      end
-
+-- Scroll to bottom of buffer
+local scroll_to_bottom = function(bufnr)
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+  for _, win in pairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == bufnr then
+      vim.api.nvim_win_set_cursor(win, { line_count, 0 })
       break
     end
   end
 end
-
 -- Update chat display
-function chat.update_chat_display()
+local function update_chat_display()
   if not chat.chat_state.is_open or not chat.chat_state.current_session then
     return
   end
@@ -341,16 +91,265 @@ function chat.update_chat_display()
 
   -- Auto-scroll if enabled
   if chat.chat_state.config.auto_scroll then
-    chat.scroll_to_bottom(chat.chat_state.buffers.chat)
+    scroll_to_bottom(chat.chat_state.buffers.chat)
   end
 end
 
--- Scroll to bottom of buffer
-function chat.scroll_to_bottom(bufnr)
-  local line_count = vim.api.nvim_buf_line_count(bufnr)
-  for _, win in pairs(vim.api.nvim_list_wins()) do
-    if vim.api.nvim_win_get_buf(win) == bufnr then
-      vim.api.nvim_win_set_cursor(win, { line_count, 0 })
+-- Add message to current session
+function chat.add_message(type, content, metadata)
+  if not chat.chat_state.current_session then
+    chat.new_session()
+  end
+  metadata = metadata or {}
+  metadata["timestamp"] = os.date("%Y-%m-%d %H:%M:%S")
+
+  local message = {
+    type = type,
+    content = content,
+    metadata = metadata or {},
+  }
+
+  table.insert(chat.chat_state.current_session.messages, message)
+
+  -- Update UI if open
+  if chat.chat_state.is_open then
+    update_chat_display()
+  end
+
+  -- Auto-save if enabled
+  if chat.chat_state.config.save_history then
+    chat.save_history()
+  end
+end
+
+-- Create new chat session
+function chat.new_session()
+  chat.chat_state.current_session = {
+    id = os.time(),
+    messages = {},
+    thinking = {},
+    created_at = os.date("%Y-%m-%d %H:%M:%S"),
+  }
+
+  if chat.chat_state.is_open and chat.chat_state.config.show_thinking then
+    chat.update_thinking_display()
+  end
+
+  -- Add system message
+  chat.add_message(MESSAGE_TYPES.SYSTEM, "NeoAI Chat Session Started", {
+    session_id = chat.chat_state.current_session.id,
+  })
+end
+
+local start_thinking_block = function()
+  if not chat.chat_state.current_session then
+    chat.new_session()
+  end
+
+  table.insert(chat.chat_state.current_session.thinking, {
+    content = "",
+    timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+  })
+end
+
+local append_thinking_chunk = function(chunk)
+  if not chat.chat_state.current_session or #chat.chat_state.current_session.thinking == 0 then
+    return
+  end
+
+  local latest = chat.chat_state.current_session.thinking[#chat.chat_state.current_session.thinking]
+  latest.content = latest.content .. chunk
+
+  if chat.chat_state.is_open and chat.chat_state.config.show_thinking then
+    chat.update_thinking_display()
+  end
+end
+
+function chat.update_thinking_display()
+  if not chat.chat_state.is_open or not chat.chat_state.config.show_thinking then
+    return
+  end
+
+  local lines = {}
+  local blocks = chat.chat_state.current_session.thinking
+
+  for _, block in ipairs(blocks) do
+    table.insert(lines, "=== AI Thinking Process ===")
+    for _, line in ipairs(vim.split(block.content, "\n")) do
+      table.insert(lines, "  " .. line)
+    end
+    table.insert(lines, "")
+  end
+
+  vim.api.nvim_buf_set_lines(chat.chat_state.buffers.thinking, 0, -1, false, lines)
+
+  if chat.chat_state.config.auto_scroll then
+    scroll_to_bottom(chat.chat_state.buffers.thinking)
+  end
+end
+
+-- Open chat window
+function chat.open()
+  local ui = require("neoai.ui")
+  local keymaps = require("neoai.keymaps")
+
+  ui.open()
+  keymaps.buffer_setup()
+
+  update_chat_display()
+  if chat.chat_state.config.show_thinking then
+    chat.update_thinking_display()
+  end
+end
+
+-- Close chat window
+function chat.close()
+  local ui = require("neoai.ui")
+  ui.close()
+end
+
+-- Toggle chat window
+function chat.toggle()
+  if chat.chat_state.is_open then
+    chat.close()
+  else
+    chat.open()
+  end
+end
+
+-- Send message
+function chat.send_message()
+  if not chat.chat_state.is_open then
+    return
+  end
+
+  -- Get input
+  local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.input, 0, -1, false)
+  local message = table.concat(lines, "\n"):gsub("^%s*(.-)%s*$", "%1")
+
+  if message == "" then
+    return
+  end
+
+  -- Add user message
+  chat.add_message(MESSAGE_TYPES.USER, message)
+
+  -- Clear input
+  vim.api.nvim_buf_set_lines(chat.chat_state.buffers.input, 0, -1, false, { "" })
+
+  -- Send to AI
+  chat.send_to_ai()
+  start_thinking_block()
+end
+
+-- Send message to AI
+function chat.send_to_ai()
+  -- Build message history for API
+  local messages = {}
+
+  -- Add system prompt
+  local system_prompt = chat.get_system_prompt()
+  table.insert(messages, {
+    role = "system",
+    content = system_prompt,
+  })
+
+  -- Add conversation history (last 20 messages to avoid context limit)
+  local recent_messages = {}
+  local count = 0
+  for i = #chat.chat_state.current_session.messages, 1, -1 do
+    local msg = chat.chat_state.current_session.messages[i]
+    if msg.type == MESSAGE_TYPES.USER or msg.type == MESSAGE_TYPES.ASSISTANT then
+      table.insert(recent_messages, 1, msg)
+      count = count + 1
+      if count >= 20 then
+        break
+      end
+    end
+  end
+
+  -- Convert to API format
+  for _, msg in ipairs(recent_messages) do
+    table.insert(messages, {
+      role = msg.type,
+      content = msg.content,
+    })
+  end
+
+  -- Insert placeholder for streaming response (fix for first message not streaming)
+  if chat.chat_state.is_open then
+    local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.chat, 0, -1, false)
+    table.insert(lines, "Assistant: " .. os.date("%H:%M:%S"))
+    table.insert(lines, "")
+    vim.api.nvim_buf_set_lines(chat.chat_state.buffers.chat, 0, -1, false, lines)
+    if chat.chat_state.config.auto_scroll then
+      scroll_to_bottom(chat.chat_state.buffers.chat)
+    end
+  end
+
+  -- Call API with streaming
+  chat.stream_ai_response(messages)
+end
+
+-- Stream AI response
+function chat.stream_ai_response(messages)
+  local api = require("neoai.api")
+
+  local response_content = ""
+  local response_start_time = os.time()
+
+  api.stream(messages, function(content)
+    response_content = response_content .. content
+    chat.update_streaming_message(response_content)
+  end, function(reason_chunk)
+    append_thinking_chunk(reason_chunk)
+  end, function(tool_calls) end, function()
+    chat.add_message(MESSAGE_TYPES.ASSISTANT, response_content, {
+      response_time = os.time() - response_start_time,
+    })
+    update_chat_display()
+  end, function(exit_code)
+    chat.add_message(MESSAGE_TYPES.ERROR, "Failed to get response from AI", {
+      exit_code = exit_code,
+    })
+    update_chat_display()
+  end)
+end
+
+-- Update streaming message display
+function chat.update_streaming_message(content)
+  if not chat.chat_state.is_open then
+    return
+  end
+
+  -- Get current display lines
+  local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.chat, 0, -1, false)
+
+  -- Find the last "Assistant:" line and update it
+  for i = #lines, 1, -1 do
+    if lines[i]:match("^Assistant:") then
+      -- Replace lines from this point
+      local new_lines = {}
+      for j = 1, i - 1 do
+        table.insert(new_lines, lines[j])
+      end
+
+      -- Add streaming response
+      table.insert(new_lines, "Assistant: " .. os.date("%H:%M:%S"))
+      local content_lines = vim.split(content, "\n")
+      for _, line in ipairs(content_lines) do
+        table.insert(new_lines, "  " .. line)
+      end
+      table.insert(new_lines, "")
+
+      -- Update buffer
+      vim.api.nvim_buf_set_lines(chat.chat_state.buffers.chat, 0, -1, false, new_lines)
+
+      -- Auto-scroll if enabled
+      if chat.chat_state.config.auto_scroll then
+        scroll_to_bottom(chat.chat_state.buffers.chat)
+      end
+
       break
     end
   end

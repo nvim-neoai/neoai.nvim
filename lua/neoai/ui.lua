@@ -1,9 +1,24 @@
 local ui = {}
 local chat_state = require("neoai.chat").chat_state
 
+local function get_rightmost_win()
+  local rightmost_win = nil
+  local max_col = -1
+
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local pos = vim.api.nvim_win_get_position(win)
+    local col = pos[2]
+    if col > max_col then
+      max_col = col
+      rightmost_win = win
+    end
+  end
+
+  return rightmost_win
+end
+
 --- Open NeoAI chat UI
 function ui.open()
-
   if chat_state.is_open then
     return
   end
@@ -32,7 +47,9 @@ function ui.open()
   end
 
   -- Open vertical split at far right
-  vim.cmd("vsplit")
+  local right_most_win = get_rightmost_win()
+  vim.api.nvim_set_current_win(right_most_win)
+  vim.cmd("rightbelow vsplit")
   local vsplit_win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_width(vsplit_win, chat_state.config.window.width or 80)
 
@@ -67,8 +84,7 @@ function ui.open()
 end
 
 --- Close NeoAI chat UI
----@param chat_state table Chat state containing buffers and windows
-function ui.close(chat_state)
+function ui.close()
   if not chat_state.is_open then
     return
   end
