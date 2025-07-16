@@ -13,8 +13,8 @@ syntax match NeoAIChatUserPrefix "^User: .*$"
 syntax match NeoAIChatAssistantPrefix "^Assistant: .*$"
 syntax match NeoAIChatSystemPrefix "^System: .*$"
 syntax match NeoAIChatErrorPrefix "^Error: .*$"
-
 syntax match NeoAIChatContent "^  .*$"
+syntax region NeoAIThinkingBlock start="^  <think>" end="^  </think>"
 
 " Define colors
 highlight default link NeoAIChatHeader Title
@@ -24,5 +24,6 @@ highlight default link NeoAIChatAssistantPrefix Function
 highlight default link NeoAIChatSystemPrefix Special
 highlight default link NeoAIChatErrorPrefix Error
 highlight default link NeoAIChatContent Normal
+highlight default link NeoAIThinkingBlock Comment
 
 let b:current_syntax = "neoai-chat"

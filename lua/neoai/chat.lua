@@ -175,6 +175,8 @@ function chat.update_thinking_display()
 
   for _, block in ipairs(blocks) do
     table.insert(lines, "=== AI Thinking Process ===")
+    table.insert(lines, "User Message At: " .. block.timestamp)
+    table.insert(lines, "")
     for _, line in ipairs(vim.split(block.content, "\n")) do
       table.insert(lines, "  " .. line)
     end
@@ -232,7 +234,7 @@ function chat.send_message()
   end
 
   -- Add user message
-  chat.add_message(MESSAGE_TYPES.USER, message)
+  local message_object = chat.add_message(MESSAGE_TYPES.USER, message)
 
   -- Clear input
   vim.api.nvim_buf_set_lines(chat.chat_state.buffers.input, 0, -1, false, { "" })
@@ -295,25 +297,39 @@ end
 function chat.stream_ai_response(messages)
   local api = require("neoai.api")
 
-  local response_content = ""
+  local content_response = ""
+  local thinking_response = ""
   local response_start_time = os.time()
 
-  api.stream(messages, function(content)
-    response_content = response_content .. content
-    chat.update_streaming_message(response_content)
-  end, function(reason_chunk)
-    append_thinking_chunk(reason_chunk)
-  end, function(tool_calls) end, function()
-    chat.add_message(MESSAGE_TYPES.ASSISTANT, response_content, {
-      response_time = os.time() - response_start_time,
-    })
-    update_chat_display()
-  end, function(exit_code)
-    chat.add_message(MESSAGE_TYPES.ERROR, "Failed to get response from AI", {
-      exit_code = exit_code,
-    })
-    update_chat_display()
-  end)
+  api.stream(
+    messages,
+    -- streaming callback
+    function(content)
+      content_response = content_response .. content
+      chat.update_streaming_message(content_response)
+    end,
+    function(reason_chunk)
+      append_thinking_chunk(reason_chunk)
+      thinking_response = thinking_response .. reason_chunk
+    end,
+    -- tool call callback
+    function(tool_calls) end,
+    -- streaming complete callback
+    function()
+      thinking_response = "<think>" .. thinking_response .. "</think>\n\n"
+      chat.add_message(MESSAGE_TYPES.ASSISTANT, thinking_response .. content_response, {
+        response_time = os.time() - response_start_time,
+      })
+      update_chat_display()
+    end,
+    -- error callback
+    function(exit_code)
+      chat.add_message(MESSAGE_TYPES.ERROR, "Failed to get response from AI", {
+        exit_code = exit_code,
+      })
+      update_chat_display()
+    end
+  )
 end
 
 -- Update streaming message display

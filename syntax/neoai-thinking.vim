@@ -5,6 +5,8 @@ endif
 
 " Define syntax regions
 syntax match NeoAIThinkingHeader "^=== AI Thinking Process ===$"
+syntax match NeoAIThinkingStep "^User Message At: .*"
+
 syntax match NeoAIThinkingContent "^  .*$"
 
 " Define colors
