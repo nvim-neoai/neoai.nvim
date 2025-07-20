@@ -17,7 +17,6 @@ function neoai.setup(opts)
   -- Create user commands
   neoai.create_commands()
 
-  require("neoai.ai_tools").setup()
   require("neoai.keymaps").setup()
 
   return neoai.config

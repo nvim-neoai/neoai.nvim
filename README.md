@@ -1,12 +1,13 @@
 # NeoAI.nvim
 
-A powerful AI chat interface for Neovim with message history, thinking process visualization, and streaming responses.
+A powerful AI chat interface for Neovim with message history, scratch pad process visualization, and streaming responses.
 
 ## Features
 
 - **Interactive Chat UI**: Full-featured chat interface with floating windows
 - **Message History**: Persistent conversation history with automatic saving and instant clearing
 - **Thinking Process**: See how the AI processes your requests step by step
+- **Tool Call Process**: See how the AI processes tool calls
 - **Streaming Responses**: Real-time response streaming for better user experience
 - **Multiple AI Providers**: Support for OpenAI, Groq, Anthropic, and local models
 - **Syntax Highlighting**: Beautiful syntax highlighting for chat messages
@@ -67,7 +68,7 @@ require("neoai").setup({
     window = {
       width = 80,
     },
-    show_thinking = true,
+    show_scratch_pad = true,
     auto_scroll = true,
   },
 })
@@ -99,7 +100,7 @@ require("neoai").setup({
     history_file = vim.fn.stdpath("data") .. "/neoai_chat_history.json",
 
     -- Display settings
-    show_thinking = true,
+    show_scratch_pad = true,
     auto_scroll = true,
   },
 })
@@ -167,8 +168,8 @@ require("neoai").setup({
 **Default Keymaps:**
 
 - `<CR>` (Enter) — Send message (input box)
-- `<C-c>` — Close chat (input, chat, and thinking boxes)
-- `q` — Close chat (chat and thinking boxes)
+- `<C-c>` — Close chat (input, chat, and scratch pad boxes)
+- `q` — Close chat (chat and scratch pad boxes)
 - `<C-s>` — Save history (chat box)
 - `<leader>ai` - Open Chat
 - `<leader>at` - Toggle Chat
@@ -183,8 +184,8 @@ Keymaps are configured in the setup function under the `keymaps` field. See `lua
 │                       🧠 Chat Box                        │
 │  (Displays conversation history between user and AI)     │
 ├──────────────────────────────────────────────────────────┤
-│                   💭 Thinking Box (optional)             │
-│     (Shows "thinking..." or internal AI reasoning)       │
+│                   💭 Scratch Pad Box (optional)          │
+│     (Shows "scratch pad..." tool call and reasoning)     │
 ├──────────────────────────────────────────────────────────┤
 │                    ⌨️ Input Box                          │
 │       (User types message here and presses Enter)        │
@@ -251,19 +252,18 @@ require("neoai").setup({
 - Clearing chat history updates the file immediately
 - Supports multiple sessions
 - Configurable history limit
+
 ### AI Context Window
 
 - Only the last 10 user/assistant messages are sent to the AI for context by default (configurable in code)
 - If you want the AI to always remember certain facts, increase this limit or add facts to the system prompt
 
-### Thinking Process
+### Thinking and Tool call Process
 
-When `show_thinking` is enabled, you can see:
+When `show_scratch_pad` is enabled, you can see:
 
-- Message processing steps
-- API request preparation
-- Response streaming status
-- Error handling
+- AI reasoning
+- Agent Tool calls
 
 ### Streaming Responses
 
@@ -277,12 +277,10 @@ When `show_thinking` is enabled, you can see:
 ### Common Issues
 
 1. **API Key Not Set**
-
    - Make sure to set your API key in the configuration
    - Check that the key is valid and has proper permissions
 
 2. **Network Issues**
-
    - Verify internet connection
    - Check if the API endpoint is accessible
    - Try with a different model
@@ -320,16 +318,3 @@ require("neoai").setup({
 ## License
 
 MIT License - see LICENSE file for details
-
-## Changelog
-
-### v1.0.0
-
-- Initial release
-- Chat interface with floating windows
-- Message history with persistence
-- Thinking process visualization
-- Streaming responses
-- Multiple AI provider support
-- Syntax highlighting
-- Session management

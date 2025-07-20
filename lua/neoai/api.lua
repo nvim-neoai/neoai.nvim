@@ -8,11 +8,20 @@ local api = {}
 --- Stream AI response from API
 ---@param messages table List of messages formatted for API request
 ---@param on_content_chunk fun(content:string) Callback function invoked with each chunk of content received
----@param on_tool_call_chunk fun(tool_calls:string)
+---@param on_tool_call_chunk fun(tool_calls:table)
 ---@param on_reasoning_chunk fun(reasons:string)
----@param on_complete fun() Callback function invoked when streaming completes successfully
+---@param on_content_complete fun() Callback function invoked when streaming completes successfully
+---@param on_tool_call_complete fun()
 ---@param on_error fun(exit_code:number) Callback function invoked when an error occurs, receives exit code
-function api.stream(messages, on_content_chunk, on_reasoning_chunk, on_tool_call_chunk, on_complete, on_error)
+function api.stream(
+    messages,
+    on_content_chunk,
+    on_reasoning_chunk,
+    on_tool_call_chunk,
+    on_content_complete,
+    on_tool_call_complete,
+    on_error
+)
   local payload = vim.fn.json_encode({
     model = conf.model,
     temperature = conf.temperature,
@@ -50,16 +59,22 @@ function api.stream(messages, on_content_chunk, on_reasoning_chunk, on_tool_call
             vim.schedule(function()
               local ok, decoded = pcall(vim.fn.json_decode, chunk)
               if ok and decoded then
+                local finished_reason = decoded.choices and decoded.choices[1] and decoded.choices[1].finish_reason
                 local delta = decoded.choices and decoded.choices[1] and decoded.choices[1].delta
                 local content = delta and delta.content
                 local tool_calls = delta and delta.tool_calls
                 local reasons = delta and delta.reasoning
-                if content and content ~= "" then
+                if content and content ~= vim.NIL and content ~= "" then
                   on_content_chunk(content)
-                elseif tool_calls and tool_calls ~= "" then
+                elseif tool_calls then
                   on_tool_call_chunk(tool_calls)
-                elseif reasons and reasons ~= "" then
+                elseif reasons and reasons ~= vim.NIL and reasons ~= "" then
                   on_reasoning_chunk(reasons)
+                end
+                if finished_reason == "stop" then
+                  on_content_complete()
+                elseif finished_reason == "tool_calls" then
+                  on_tool_call_complete()
                 end
               end
             end)
@@ -69,9 +84,7 @@ function api.stream(messages, on_content_chunk, on_reasoning_chunk, on_tool_call
     end,
     on_exit = function(_, exit_code)
       vim.schedule(function()
-        if exit_code == 0 then
-          on_complete()
-        else
+        if exit_code ~= 0 then
           on_error(exit_code)
         end
       end)

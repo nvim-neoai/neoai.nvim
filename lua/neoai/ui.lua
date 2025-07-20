@@ -33,17 +33,17 @@ function ui.open()
 
   chat_state.buffers.input = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_buf_set_name(chat_state.buffers.input, "neoai://input")
-  vim.api.nvim_buf_set_option(chat_state.buffers.input, "filetype", "neoai-input")
+  vim.api.nvim_buf_set_option(chat_state.buffers.input, "filetype", "markdown")
   vim.api.nvim_buf_set_option(chat_state.buffers.input, "buftype", "nofile")
   vim.api.nvim_buf_set_option(chat_state.buffers.input, "bufhidden", "wipe")
 
-  if chat_state.config.show_thinking then
-    chat_state.buffers.thinking = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_name(chat_state.buffers.thinking, "neoai://thinking")
-    vim.api.nvim_buf_set_option(chat_state.buffers.thinking, "filetype", "neoai-thinking")
-    vim.api.nvim_buf_set_option(chat_state.buffers.thinking, "buftype", "nofile")
-    vim.api.nvim_buf_set_option(chat_state.buffers.thinking, "bufhidden", "wipe")
-    vim.api.nvim_buf_set_option(chat_state.buffers.thinking, "wrap", true)
+  if chat_state.config.show_scratch_pad then
+    chat_state.buffers.scratch_pad = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_name(chat_state.buffers.scratch_pad, "neoai://scratchpad")
+    vim.api.nvim_buf_set_option(chat_state.buffers.scratch_pad, "filetype", "neoai-scratchpad")
+    vim.api.nvim_buf_set_option(chat_state.buffers.scratch_pad, "buftype", "nofile")
+    vim.api.nvim_buf_set_option(chat_state.buffers.scratch_pad, "bufhidden", "wipe")
+    vim.api.nvim_buf_set_option(chat_state.buffers.scratch_pad, "wrap", true)
   end
 
   -- Open vertical split at far right
@@ -59,14 +59,14 @@ function ui.open()
   vim.api.nvim_set_option_value("winbar", " Input (Enter to send) ", { win = input_win })
   chat_state.windows.input = input_win
 
-  -- Split for thinking box (middle)
-  if chat_state.config.show_thinking then
+  -- Split for scratch pad box (middle)
+  if chat_state.config.show_scratch_pad then
     vim.cmd("aboveleft split")
-    local thinking_win = vim.api.nvim_get_current_win()
-    vim.api.nvim_win_set_buf(thinking_win, chat_state.buffers.thinking)
-    vim.api.nvim_win_set_height(thinking_win, 3)
-    vim.api.nvim_set_option_value("winbar", " Thinking ", { win = thinking_win })
-    chat_state.windows.thinking = thinking_win
+    local scratch_pad_win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_buf(scratch_pad_win, chat_state.buffers.scratch_pad)
+    vim.api.nvim_win_set_height(scratch_pad_win, 3)
+    vim.api.nvim_set_option_value("winbar", " Scratch Pad ", { win = scratch_pad_win })
+    chat_state.windows.scratch_pad = scratch_pad_win
   end
 
   -- Use aboveleft split (top) for chat

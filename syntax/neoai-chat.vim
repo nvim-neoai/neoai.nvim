@@ -10,6 +10,7 @@ syntax match NeoAIChatSessionInfo "^Created: .*$"
 syntax match NeoAIChatSessionInfo "^Messages: .*$"
 
 syntax match NeoAIChatUserPrefix "^User: .*$"
+syntax match NeoAIChatToolPrefix "^Tool: .*$"
 syntax match NeoAIChatAssistantPrefix "^Assistant: .*$"
 syntax match NeoAIChatSystemPrefix "^System: .*$"
 syntax match NeoAIChatErrorPrefix "^Error: .*$"
@@ -21,6 +22,7 @@ highlight default link NeoAIChatHeader Title
 highlight default link NeoAIChatSessionInfo Comment
 highlight default link NeoAIChatUserPrefix Identifier
 highlight default link NeoAIChatAssistantPrefix Function
+highlight default link NeoAIChatToolPrefix Function
 highlight default link NeoAIChatSystemPrefix Special
 highlight default link NeoAIChatErrorPrefix Error
 highlight default link NeoAIChatContent Normal

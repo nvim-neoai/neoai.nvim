@@ -58,19 +58,19 @@ function M.buffer_setup()
     { noremap = true, silent = true }
   )
 
-  -- Thinking buffer mappings (if enabled)
-  if chat_state.config.show_thinking and chat_state.buffers.thinking then
+  -- Scratch pad buffer mappings (if enabled)
+  if chat_state.config.show_scratch_pad and chat_state.buffers.scratch_pad then
     vim.api.nvim_buf_set_keymap(
-      chat_state.buffers.thinking,
+      chat_state.buffers.scratch_pad,
       "n",
-      keymaps.thinking.close[1],
+      keymaps.scratch_pad.close[1],
       ":lua require('neoai.chat').close()<CR>",
       { noremap = true, silent = true }
     )
     vim.api.nvim_buf_set_keymap(
-      chat_state.buffers.thinking,
+      chat_state.buffers.scratch_pad,
       "n",
-      keymaps.thinking.close[2],
+      keymaps.scratch_pad.close[2],
       ":lua require('neoai.chat').close()<CR>",
       { noremap = true, silent = true }
     )

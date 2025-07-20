@@ -12,7 +12,7 @@
 ---@class KeymapConfig
 ---@field input table<string, string>
 ---@field chat table<string, string|string[]>
----@field thinking table<string, string|string[]>
+---@field scratch_pad table<string, string|string[]>
 
 ---@class WindowConfig
 ---@field width number
@@ -22,7 +22,7 @@
 ---@field history_limit number
 ---@field save_history boolean
 ---@field history_file unknown
----@field show_thinking boolean
+---@field show_scratch_pad boolean
 ---@field auto_scroll boolean
 
 ---@class Config
@@ -45,7 +45,7 @@ config.defaults = {
       close = { "<C-c>", "q" },
       save_history = "<C-s>",
     },
-    thinking = {
+    scratch_pad = {
       close = { "<C-c>", "q" },
     },
     normal = {
@@ -61,9 +61,7 @@ config.defaults = {
     api_key_header = "Authorization", -- Default header
     api_key_format = "Bearer %s",    -- Default format
     model = "your-ai-model-here",
-    temperature = 0.4,
     max_completion_tokens = 4096,
-    top_p = 0.9,
   },
 
   -- Chat UI settings
@@ -78,7 +76,7 @@ config.defaults = {
     history_file = vim.fn.stdpath("data") .. "/neoai_chat_history.json",
 
     -- Display settings:
-    show_thinking = true, -- Show AI thinking process
+    show_scratch_pad = true, -- Show AI scratch pad process
     auto_scroll = true,   -- Auto-scroll to bottom
   },
 
@@ -88,7 +86,6 @@ config.defaults = {
         url = "https://api.groq.com/openai/v1/chat/completions",
         api_key = os.getenv("GROQ_API_KEY") or "<your api key>",
         model = "deepseek-r1-distill-llama-70b",
-        temperature = 0.4,
       },
     },
 
@@ -96,8 +93,7 @@ config.defaults = {
       api = {
         url = "https://api.openai.com/v1/chat/completions",
         api_key = os.getenv("OPENAI_API_KEY") or "<your api key>",
-        model = "gpt-4-turbo-preview",
-        temperature = 0.3,
+        model = "o4-mini",
       },
     },
 
@@ -108,7 +104,6 @@ config.defaults = {
         api_key_header = "x-api-key",
         api_key_format = "%s",
         model = "claude-3-sonnet-20240229",
-        temperature = 0.2,
       },
     },
 
@@ -118,7 +113,6 @@ config.defaults = {
         url = "http://localhost:11434/v1/chat/completions",
         api_key = "", -- No API key needed for local
         model = "llama3.2",
-        temperature = 0.5,
       },
     },
   },
