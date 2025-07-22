@@ -57,24 +57,6 @@ function M.buffer_setup()
     ":lua require('neoai.chat').save_history()<CR>",
     { noremap = true, silent = true }
   )
-
-  -- Scratch pad buffer mappings (if enabled)
-  if chat_state.config.show_scratch_pad and chat_state.buffers.scratch_pad then
-    vim.api.nvim_buf_set_keymap(
-      chat_state.buffers.scratch_pad,
-      "n",
-      keymaps.scratch_pad.close[1],
-      ":lua require('neoai.chat').close()<CR>",
-      { noremap = true, silent = true }
-    )
-    vim.api.nvim_buf_set_keymap(
-      chat_state.buffers.scratch_pad,
-      "n",
-      keymaps.scratch_pad.close[2],
-      ":lua require('neoai.chat').close()<CR>",
-      { noremap = true, silent = true }
-    )
-  end
 end
 
 return M

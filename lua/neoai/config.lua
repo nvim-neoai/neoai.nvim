@@ -12,7 +12,6 @@
 ---@class KeymapConfig
 ---@field input table<string, string>
 ---@field chat table<string, string|string[]>
----@field scratch_pad table<string, string|string[]>
 
 ---@class WindowConfig
 ---@field width number
@@ -22,7 +21,6 @@
 ---@field history_limit number
 ---@field save_history boolean
 ---@field history_file unknown
----@field show_scratch_pad boolean
 ---@field auto_scroll boolean
 
 ---@class Config
@@ -44,9 +42,6 @@ config.defaults = {
     chat = {
       close = { "<C-c>", "q" },
       save_history = "<C-s>",
-    },
-    scratch_pad = {
-      close = { "<C-c>", "q" },
     },
     normal = {
       open = "<leader>ai",
@@ -76,7 +71,6 @@ config.defaults = {
     history_file = vim.fn.stdpath("data") .. "/neoai_chat_history.json",
 
     -- Display settings:
-    show_scratch_pad = true, -- Show AI scratch pad process
     auto_scroll = true,   -- Auto-scroll to bottom
   },
 

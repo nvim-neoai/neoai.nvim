@@ -10,7 +10,7 @@ syntax match NeoAIChatSessionInfo "^Created: .*$"
 syntax match NeoAIChatSessionInfo "^Messages: .*$"
 
 syntax match NeoAIChatUserPrefix "^User: .*$"
-syntax match NeoAIChatToolPrefix "^Tool: .*$"
+syntax match NeoAIChatToolPrefix "^Tool Response: .*$"
 syntax match NeoAIChatAssistantPrefix "^Assistant: .*$"
 syntax match NeoAIChatSystemPrefix "^System: .*$"
 syntax match NeoAIChatErrorPrefix "^Error: .*$"

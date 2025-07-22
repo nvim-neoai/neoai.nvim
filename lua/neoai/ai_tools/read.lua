@@ -47,9 +47,16 @@ M.run = function(args)
     end
     current_line = current_line + 1
   end
-
   file:close()
-  return table.concat(lines, "\n")
+
+  local function get_extension(filename)
+    return filename:match("^.+%.([a-zA-Z0-9_]+)$") or ""
+  end
+
+  local ext = get_extension(path)
+  local code_block = "```" .. ext .. "\n" .. table.concat(lines, "\n") .. "\n```"
+
+  return code_block
 end
 
 return M

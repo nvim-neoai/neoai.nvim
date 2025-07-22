@@ -1,6 +1,6 @@
 # NeoAI.nvim
 
-A powerful AI chat interface for Neovim with message history, scratch pad process visualization, and streaming responses.
+A powerful AI chat interface for Neovim with message history and streaming responses.
 
 ## Features
 
@@ -68,7 +68,6 @@ require("neoai").setup({
     window = {
       width = 80,
     },
-    show_scratch_pad = true,
     auto_scroll = true,
   },
 })
@@ -100,7 +99,6 @@ require("neoai").setup({
     history_file = vim.fn.stdpath("data") .. "/neoai_chat_history.json",
 
     -- Display settings
-    show_scratch_pad = true,
     auto_scroll = true,
   },
 })
@@ -168,8 +166,8 @@ require("neoai").setup({
 **Default Keymaps:**
 
 - `<CR>` (Enter) — Send message (input box)
-- `<C-c>` — Close chat (input, chat, and scratch pad boxes)
-- `q` — Close chat (chat and scratch pad boxes)
+- `<C-c>` — Close chat (input and chat boxes)
+- `q` — Close chat (chat box)
 - `<C-s>` — Save history (chat box)
 - `<leader>ai` - Open Chat
 - `<leader>at` - Toggle Chat
@@ -183,9 +181,6 @@ Keymaps are configured in the setup function under the `keymaps` field. See `lua
 ┌──────────────────────────────────────────────────────────┐
 │                       🧠 Chat Box                        │
 │  (Displays conversation history between user and AI)     │
-├──────────────────────────────────────────────────────────┤
-│                   💭 Scratch Pad Box (optional)          │
-│     (Shows "scratch pad..." tool call and reasoning)     │
 ├──────────────────────────────────────────────────────────┤
 │                    ⌨️ Input Box                          │
 │       (User types message here and presses Enter)        │
@@ -257,13 +252,6 @@ require("neoai").setup({
 
 - Only the last 10 user/assistant messages are sent to the AI for context by default (configurable in code)
 - If you want the AI to always remember certain facts, increase this limit or add facts to the system prompt
-
-### Thinking and Tool call Process
-
-When `show_scratch_pad` is enabled, you can see:
-
-- AI reasoning
-- Agent Tool calls
 
 ### Streaming Responses
 

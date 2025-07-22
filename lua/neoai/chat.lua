@@ -56,36 +56,39 @@ local function update_chat_display()
   local lines = {}
 
   -- Add session header
-  table.insert(lines, "=== NeoAI Chat Session ===")
-  table.insert(lines, "Session ID: " .. chat.chat_state.current_session.id)
-  table.insert(lines, "Created: " .. chat.chat_state.current_session.created_at)
-  table.insert(lines, "Messages: " .. #chat.chat_state.current_session.messages)
+  table.insert(lines, " **NeoAI Chat Session** ")
+  table.insert(lines, " *Session ID: " .. chat.chat_state.current_session.id .. "* ")
+  table.insert(lines, " *Created: " .. chat.chat_state.current_session.created_at .. "* ")
+  table.insert(lines, " *Messages: " .. #chat.chat_state.current_session.messages .. "* ")
   table.insert(lines, "")
 
   -- Add messages
   for _, message in ipairs(chat.chat_state.current_session.messages) do
     local prefix = ""
     if message.type == MESSAGE_TYPES.USER then
-      prefix = "User: " .. message.metadata.timestamp
+      prefix = "**User:** " .. "*" .. message.metadata.timestamp .. "*"
     elseif message.type == MESSAGE_TYPES.ASSISTANT then
-      prefix = "Assistant: " .. message.metadata.timestamp
+      prefix = "**Assistant:** " .. "*" .. message.metadata.timestamp
       if message.metadata.response_time then
         prefix = prefix .. " (" .. message.metadata.response_time .. "s)"
       end
+      prefix = prefix .. "*"
     elseif message.type == MESSAGE_TYPES.TOOL then
-      prefix = "Tool: " .. message.metadata.timestamp
+      prefix = "**Tool Response:** " .. "*" .. message.metadata.timestamp .. "*"
     elseif message.type == MESSAGE_TYPES.SYSTEM then
-      prefix = "System: " .. message.metadata.timestamp
+      prefix = "**System:** " .. "*" .. message.metadata.timestamp .. "*"
     elseif message.type == MESSAGE_TYPES.ERROR then
-      prefix = "Error: " .. message.metadata.timestamp
+      prefix = "**Error:** " .. "*" .. message.metadata.timestamp .. "*"
     end
 
+    table.insert(lines, "---")
     table.insert(lines, prefix)
+    table.insert(lines, "")
 
     -- Add message content
     local content_lines = vim.split(message.content, "\n")
     for _, line in ipairs(content_lines) do
-      table.insert(lines, "  " .. line)
+      table.insert(lines, "" .. line)
     end
     table.insert(lines, "")
   end
@@ -142,66 +145,13 @@ function chat.new_session()
   chat.chat_state.current_session = {
     id = os.time(),
     messages = {},
-    scratch_pad = {},
     created_at = os.date("%Y-%m-%d %H:%M:%S"),
   }
-
-  if chat.chat_state.is_open and chat.chat_state.config.show_scratch_pad then
-    chat.update_scratch_pad_display()
-  end
 
   -- Add system message
   chat.add_message(MESSAGE_TYPES.SYSTEM, "NeoAI Chat Session Started", {
     session_id = chat.chat_state.current_session.id,
   })
-end
-
-local start_scratch_pad_block = function()
-  if not chat.chat_state.current_session then
-    chat.new_session()
-  end
-
-  table.insert(chat.chat_state.current_session.scratch_pad, {
-    reasoning = "",
-    timestamp = os.date("%Y-%m-%d %H:%M:%S"),
-  })
-end
-
-local append_scratch_pad_chunk = function(chunk)
-  if not chat.chat_state.current_session or #chat.chat_state.current_session.scratch_pad == 0 then
-    return
-  end
-
-  local latest = chat.chat_state.current_session.scratch_pad[#chat.chat_state.current_session.scratch_pad]
-  latest.reasoning = latest.reasoning .. chunk
-
-  if chat.chat_state.is_open and chat.chat_state.config.show_scratch_pad then
-    chat.update_scratch_pad_display()
-  end
-end
-
-function chat.update_scratch_pad_display()
-  if not chat.chat_state.is_open or not chat.chat_state.config.show_scratch_pad then
-    return
-  end
-
-  local lines = {}
-  local blocks = chat.chat_state.current_session.scratch_pad
-
-  for _, block in ipairs(blocks) do
-    table.insert(lines, "=== AI Thinking Process ===")
-    table.insert(lines, "Thinking At: " .. block.timestamp)
-    for _, line in ipairs(vim.split(block.reasoning, "\n")) do
-      table.insert(lines, "  " .. line)
-    end
-    table.insert(lines, "")
-  end
-
-  vim.api.nvim_buf_set_lines(chat.chat_state.buffers.scratch_pad, 0, -1, false, lines)
-
-  if chat.chat_state.config.auto_scroll then
-    scroll_to_bottom(chat.chat_state.buffers.scratch_pad)
-  end
 end
 
 -- Open chat window
@@ -213,9 +163,6 @@ function chat.open()
   keymaps.buffer_setup()
 
   update_chat_display()
-  if chat.chat_state.config.show_scratch_pad then
-    chat.update_scratch_pad_display()
-  end
 end
 
 -- Close chat window
@@ -255,7 +202,6 @@ function chat.send_message()
 
   -- Send to AI
   chat.send_to_ai()
-  start_scratch_pad_block()
 end
 
 -- Send message to AI
@@ -297,7 +243,8 @@ function chat.send_to_ai()
   -- Insert placeholder for streaming response (fix for first message not streaming)
   if chat.chat_state.is_open then
     local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.chat, 0, -1, false)
-    table.insert(lines, "Assistant: " .. os.date("%H:%M:%S"))
+    table.insert(lines, "---")
+    table.insert(lines, "**Assistant:** " .. "*" .. os.date("%Y-%m-%d %H:%M:%S") .. "*")
     table.insert(lines, "")
     vim.api.nvim_buf_set_lines(chat.chat_state.buffers.chat, 0, -1, false, lines)
     if chat.chat_state.config.auto_scroll then
@@ -309,18 +256,8 @@ function chat.send_to_ai()
   chat.stream_ai_response(messages)
 end
 
--- {
---     ["function"] = {
---       arguments = '{"path":"~/.config/nvim/init.lua"}',
---       name = "ReadFile"
---     },
---     id = "w84y2ftw5",
---     index = 0,
---     type = "function"
---   }
-
 chat.get_tool_calls = function(tool_schemas)
-  chat.add_message(MESSAGE_TYPES.ASSISTANT, "", {}, nil, tool_schemas)
+  chat.add_message(MESSAGE_TYPES.ASSISTANT, "**Tool call**", {}, nil, tool_schemas)
   local tools = ai_tools.tools
   for _, tool_schema in ipairs(tool_schemas) do
     if tool_schema.type == "function" and tool_schema["function"] then
@@ -394,6 +331,7 @@ end
 function chat.stream_ai_response(messages)
   local api = require("neoai.api")
 
+  local reason_response = ""
   local content_response = ""
   local tool_calls_response = {}
   local response_start_time = os.time()
@@ -401,21 +339,21 @@ function chat.stream_ai_response(messages)
   api.stream(
     messages,
     -- streaming callback
-    function(content)
-      content_response = content_response .. content
+    function(content_chunk)
+      content_response = content_response .. content_chunk
       chat.update_streaming_message(content_response)
     end,
     function(reason_chunk)
-      append_scratch_pad_chunk(reason_chunk)
+      reason_response = reason_response .. reason_chunk
     end,
     -- tool call callback
-    function(tool_calls)
-      for _, tool_call in ipairs(tool_calls) do
+    function(tool_calls_chunk)
+      for _, tool_call in ipairs(tool_calls_chunk) do
         local found = false
         for _, existing_call in ipairs(tool_calls_response) do
           if existing_call.index == tool_call.index then
             existing_call["function"].arguments = (existing_call["function"].arguments or "")
-                .. (tool_call["function"].arguments or "")
+              .. (tool_call["function"].arguments or "")
             found = true
             break
           end
@@ -428,19 +366,23 @@ function chat.stream_ai_response(messages)
     end,
     -- streaming complete callback
     function()
-      local latest_scratch_pad = ""
-      if chat.chat_state.current_session and #chat.chat_state.current_session.scratch_pad > 0 then
-        latest_scratch_pad =
-            chat.chat_state.current_session.scratch_pad[#chat.chat_state.current_session.scratch_pad].reasoning
+      local _message = ""
+
+      if reason_response and reason_response ~= "" then
+        _message = "<think>\n" .. reason_response .. "</think>\n\n"
+      end
+      if content_response and content_response ~= "" then
+        _message = _message .. content_response
       end
 
-      chat.add_message(
-        MESSAGE_TYPES.ASSISTANT,
-        "<think>\n" .. latest_scratch_pad .. "</think>\n\n" .. content_response,
-        {
-          response_time = os.time() - response_start_time,
-        }
-      )
+      if not messages then
+        return
+      end
+
+      chat.add_message(MESSAGE_TYPES.ASSISTANT, _message, {
+        response_time = os.time() - response_start_time,
+      })
+
       update_chat_display()
     end,
     -- tool call complete callback
@@ -466,9 +408,9 @@ function chat.update_streaming_message(content)
   -- Get current display lines
   local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.chat, 0, -1, false)
 
-  -- Find the last "Assistant:" line and update it
+  -- Find the last "**Assistant:**" line and update it
   for i = #lines, 1, -1 do
-    if lines[i]:match("^Assistant:") then
+    if lines[i]:match("^%*%*Assistant:%*%*") then
       -- Replace lines from this point
       local new_lines = {}
       for j = 1, i - 1 do
@@ -476,7 +418,7 @@ function chat.update_streaming_message(content)
       end
 
       -- Add streaming response
-      table.insert(new_lines, "Assistant: " .. os.date("%H:%M:%S"))
+      table.insert(new_lines, "**Assistant:** " .. "*" .. os.date("%Y-%m-%d %H:%M:%S") .. "*")
       local content_lines = vim.split(content, "\n")
       for _, line in ipairs(content_lines) do
         table.insert(new_lines, "  " .. line)
@@ -583,7 +525,6 @@ function chat.get_session_info()
     id = chat.chat_state.current_session.id,
     created_at = chat.chat_state.current_session.created_at,
     message_count = #chat.chat_state.current_session.messages,
-    scratch_pad_count = #chat.chat_state.current_session.scratch_pad,
   }
 end
 

@@ -8,10 +8,10 @@ local api = {}
 --- Stream AI response from API
 ---@param messages table List of messages formatted for API request
 ---@param on_content_chunk fun(content:string) Callback function invoked with each chunk of content received
----@param on_tool_call_chunk fun(tool_calls:table)
----@param on_reasoning_chunk fun(reasons:string)
+---@param on_tool_call_chunk fun(tool_calls:table) Callback function invoked with each chunk of tool call received
+---@param on_reasoning_chunk fun(reasons:string) Callback function invoked with each chunk of reasoning received
 ---@param on_content_complete fun() Callback function invoked when streaming completes successfully
----@param on_tool_call_complete fun()
+---@param on_tool_call_complete fun() Callback function invoked when tool call streaming completes successfully
 ---@param on_error fun(exit_code:number) Callback function invoked when an error occurs, receives exit code
 function api.stream(
     messages,
