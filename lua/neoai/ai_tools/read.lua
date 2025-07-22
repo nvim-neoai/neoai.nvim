@@ -1,14 +1,17 @@
 local M = {}
 
 M.meta = {
-  name = "ReadFile",
-  description = "Reads the content of a file from the filesystem.",
+  name = "Read",
+  description = "Request to read the contents of a file at the specified path. Use this when you need to examine the contents of an existing file you do not know the contents of, for example to analyze code, review text files, or extract information from configuration files. May not be suitable for other types of binary files, as it returns the raw content as a string.",
   parameters = {
     type = "object",
     properties = {
-      path = {
+      file_path = {
         type = "string",
-        description = "The absolute path to the file to read",
+        description = string.format(
+          "The path of the file to read (relative to the current working directory %s)",
+          vim.fn.getcwd()
+        ),
       },
       start_line = {
         type = "number",
@@ -20,20 +23,22 @@ M.meta = {
       },
     },
     required = {
-      "path",
+      "file_path",
     },
     additionalProperties = false,
   },
 }
 
 M.run = function(args)
-  local path = args.path
+  local utils = require("neoai.ai_tools.utils")
+  local pwd = vim.fn.getcwd()
+  local path = pwd .. "/" .. args.file_path
   local start_line = args.start_line or 1
   local end_line = args.end_line or math.huge
 
   local file = io.open(path, "r")
   if not file then
-    return nil, "Cannot open file: " .. path
+    return "Cannot open file: " .. path
   end
 
   local lines = {}
@@ -54,9 +59,11 @@ M.run = function(args)
   end
 
   local ext = get_extension(path)
-  local code_block = "```" .. ext .. "\n" .. table.concat(lines, "\n") .. "\n```"
-
-  return code_block
+  local text = table.concat(lines, "\n")
+  local result = utils.make_code_block(text, ext)
+  -- After reading, append LSP diagnostics if file
+  local diag = require("neoai.ai_tools.lsp_diagnostic").run({ file_path = args.file_path })
+  return result .. "\n" .. diag
 end
 
 return M

@@ -216,7 +216,7 @@ function chat.send_to_ai()
     content = system_prompt,
   })
 
-  -- Add conversation history (last 20 messages to avoid context limit)
+  -- Add conversation history (last 100 messages to avoid context limit)
   local recent_messages = {}
   local count = 0
   for i = #chat.chat_state.current_session.messages, 1, -1 do
@@ -224,7 +224,7 @@ function chat.send_to_ai()
     if msg.type == MESSAGE_TYPES.USER or msg.type == MESSAGE_TYPES.ASSISTANT or msg.type == MESSAGE_TYPES.TOOL then
       table.insert(recent_messages, 1, msg)
       count = count + 1
-      if count >= 20 then
+      if count >= 100 then
         break
       end
     end
@@ -490,7 +490,6 @@ function chat.save_history()
   if file then
     file:write(vim.fn.json_encode(history_data))
     file:close()
-    vim.notify("Chat history saved to " .. chat.chat_state.config.history_file)
   else
     vim.notify("Failed to save chat history", vim.log.levels.ERROR)
   end

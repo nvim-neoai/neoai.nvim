@@ -6,6 +6,11 @@ M.tool_schemas = {}
 -- List of tool modules to load
 local tool_names = {
   "read",
+  "write",
+  "project_structure",
+  "multi_edit",
+  "lsp_diagnostic",
+  -- "web_search",
 }
 
 -- Load tools dynamically
@@ -30,7 +35,7 @@ local get_tool_schemas = function()
   for _, tool in pairs(M.tools) do
     table.insert(M.tool_schemas, {
       type = "function",
-      ["function"] =  tool.meta,
+      ["function"] = tool.meta,
     })
   end
 end
