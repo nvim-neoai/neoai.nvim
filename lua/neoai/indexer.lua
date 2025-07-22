@@ -2,40 +2,21 @@ local M = {}
 
 local uv = vim.loop
 local json_encode = vim.fn.json_encode
-
 local json_decode = vim.fn.json_decode
 local config = require("neoai.config")
 
--- Try to load lua sqlite3 module
-local has_sqlite, sqlite3 = pcall(require, "sqlite3")
-
--- Open a SQLite DB or fallback to JSON file store
+-- Open JSON store
 local function open_store(path)
-  if has_sqlite then
-    local db = sqlite3.open(path)
-    db:exec([[
-      CREATE TABLE IF NOT EXISTS code_chunks (
-        id INTEGER PRIMARY KEY,
-        file TEXT,
-        chunk_idx INTEGER,
-        content TEXT,
-        vector_json TEXT
-      );
-      CREATE INDEX IF NOT EXISTS idx_file ON code_chunks(file);
-    ]])
-    return { kind = "sqlite", db = db }
-  else
-    -- JSON fallback: path should end with .json
-    local store = { chunks = {} }
-    -- load existing
-    local f = io.open(path, "r")
-    if f then
-      local ok, dec = pcall(json_decode, f:read("*a"))
-      if ok and dec and dec.chunks then store = dec end
-      f:close()
+  local store = { chunks = {} }
+  local f = io.open(path, "r")
+  if f then
+    local ok, dec = pcall(json_decode, f:read("*a"))
+    if ok and dec and dec.chunks then
+      store = dec
     end
-    return { kind = "json", path = path, data = store }
+    f:close()
   end
+  return { path = path, data = store }
 end
 
 -- Save JSON store to disk
@@ -51,11 +32,15 @@ end
 local function collect_files(root, exts)
   local result = {}
   local function walk(dir)
-        local req, err = uv.fs_scandir(dir)
-    if not req then return end
+    local req = uv.fs_scandir(dir)
+    if not req then
+      return
+    end
     while true do
       local name, typ = uv.fs_scandir_next(req)
-      if not name then break end
+      if not name then
+        break
+      end
       local full = dir .. "/" .. name
       if typ == "file" then
         for _, ext in ipairs(exts) do
@@ -77,7 +62,9 @@ end
 local function read_chunks(filepath, max_chars)
   max_chars = max_chars or 2000
   local f = io.open(filepath, "r")
-  if not f then return {} end
+  if not f then
+    return {}
+  end
   local text = f:read("*a")
   f:close()
 
@@ -92,105 +79,84 @@ local function read_chunks(filepath, max_chars)
 end
 
 -- Call OpenAI Embeddings API
-local function embed(text, api_key)
-  local payload = { model = "text-embedding-ada-002", input = text }
+local function embed(text)
+  local api_conf = config.get().api
+  local url = api_conf.embedding_url
+  local model = api_conf.embedding_model
+  local header_field = api_conf.embedding_api_key_header
+  local api_key = api_conf.embedding_api_key
+  local key_header = string.format("%s: %s", header_field, string.format(api_conf.embedding_api_key_format, api_key))
+  local payload = { model = model, input = text }
   local body = json_encode(payload)
   local cmd = string.format(
-    "curl -s https://api.openai.com/v1/embeddings " ..
-    "-H 'Content-Type: application/json' " ..
-    "-H 'Authorization: Bearer %s' " ..
-    "-d '%s'", api_key, body
+    "curl -s %s " .. "-H 'Content-Type: application/json' " .. "-H '%s' " .. "-d '%s'",
+    url,
+    key_header,
+    body
   )
   local res = vim.fn.system(cmd)
   local ok, dec = pcall(json_decode, res)
   return ok and dec and dec.data and dec.data[1] and dec.data[1].embedding or nil
 end
 
--- Build index: either SQLite or JSON
+-- Build index: JSON only
 function M.build_index(opts)
   opts = vim.tbl_deep_extend("force", {
     root = uv.cwd(),
     exts = { "lua", "js", "ts", "py", "go", "java" },
     db_path = uv.cwd() .. "/.neoai_index.db",
-    api_key = config.get().api.api_key,
     chunk_size = 2000,
   }, opts or {})
 
-  if not opts.api_key or opts.api_key == "" then
-    error("API key not set")
+  local api_conf = config.get().api
+  local api_key = api_conf.embedding_api_key
+  if not api_key or api_key == "" or api_key == "<your api key>" then
+    error("Embedding API key not set")
   end
 
-  -- Determine storage mode
-  local store_path = opts.db_path
-  if not has_sqlite then
-    store_path = store_path:gsub("%.db$", ".json")
-    vim.notify("[neoai] sqlite3 module not found, using JSON store at " .. store_path, vim.log.levels.WARN)
-  end
+  local store_path = opts.db_path:gsub("%.db$", ".json")
   local store = open_store(store_path)
 
   local files = collect_files(opts.root, opts.exts)
   for _, file in ipairs(files) do
     local chunks = read_chunks(file, opts.chunk_size)
     for idx, chunk in ipairs(chunks) do
-      local vec = embed(chunk, opts.api_key)
+      local vec = embed(chunk)
       if vec then
-        if store.kind == "sqlite" then
-          local stmt = store.db:prepare([[
-            INSERT INTO code_chunks (file, chunk_idx, content, vector_json)
-            VALUES (?, ?, ?, ?);
-          ]])
-          stmt:bind_values(file, idx, chunk, json_encode(vec))
-          stmt:step()
-          stmt:finalize()
-        else
-          table.insert(store.data.chunks, { file = file, idx = idx, content = chunk, vector = vec })
-        end
+        table.insert(store.data.chunks, { file = file, idx = idx, content = chunk, vector = vec })
       end
     end
   end
 
-  if store.kind == "sqlite" then
-    store.db:close()
-    print("✅ Indexed " .. #files .. " files into SQLite DB")
-  else
-    save_json(store)
-    print("✅ Indexed " .. #files .. " files into JSON store")
-  end
+  save_json(store)
+  print("✅ Indexed " .. #files .. " files into JSON store")
 end
 
 -- Query index
 function M.query_index(query, opts)
   opts = vim.tbl_deep_extend("force", {
     db_path = uv.cwd() .. "/.neoai_index.db",
-    api_key = config.get().api.api_key,
   }, opts or {})
 
-  if not opts.api_key or opts.api_key == "" then
-    error("API key not set")
+  local api_conf = config.get().api
+  local api_key = api_conf.embedding_api_key
+  if not api_key or api_key == "" or api_key == "<your api key>" then
+    error("Embedding API key not set")
   end
 
-  local qvec = embed(query, opts.api_key)
-  if not qvec then return {} end
-
-  -- Load store
-  local store_path = opts.db_path
-  if not has_sqlite then store_path = store_path:gsub("%.db$", ".json") end
-
-  local chunks = {}
-  if has_sqlite then
-    local db = sqlite3.open(store_path)
-    for row in db:nrows("SELECT file, chunk_idx AS idx, content, vector_json FROM code_chunks") do
-      chunks[#chunks+1] = { file = row.file, idx = row.idx, content = row.content, vector = json_decode(row.vector_json) }
-    end
-    db:close()
-  else
-    -- JSON load
-    local f = io.open(store_path, "r")
-    if not f then return {} end
-    local store = json_decode(f:read("*a"))
-    f:close()
-    chunks = store.chunks or {}
+  local qvec = embed(query)
+  if not qvec then
+    return {}
   end
+
+  local store_path = opts.db_path:gsub("%.db$", ".json")
+  local f = io.open(store_path, "r")
+  if not f then
+    return {}
+  end
+  local store = json_decode(f:read("*a")) or {}
+  f:close()
+  local chunks = store.chunks or {}
 
   -- Compute similarities
   local results = {}
@@ -203,9 +169,11 @@ function M.query_index(query, opts)
       mc = mc + vec[i] * vec[i]
     end
     local score = dot / (math.sqrt(mq) * math.sqrt(mc) + 1e-12)
-    results[#results+1] = { score = score, file = item.file, idx = item.idx, content = item.content }
+    results[#results + 1] = { score = score, file = item.file, idx = item.idx, content = item.content }
   end
-  table.sort(results, function(a, b) return a.score > b.score end)
+  table.sort(results, function(a, b)
+    return a.score > b.score
+  end)
 
   return vim.list_slice(results, 1, 5)
 end

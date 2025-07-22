@@ -51,6 +51,11 @@ config.defaults = {
   },
   -- API settings
   api = {
+    embedding_url = "https://api.openai.com/v1/embeddings",
+    embedding_model = "text-embedding-3-small",
+    embedding_api_key_header = "Authorization",
+    embedding_api_key_format = "Bearer %s",
+    embedding_api_key = "<your api key>",
     url = "your-api-url-here",
     api_key = os.getenv("AI_API_KEY") or "<your api key>", -- Support environment variables
     api_key_header = "Authorization", -- Default header
