@@ -12,7 +12,6 @@
 ---@class KeymapConfig
 ---@field input table<string, string>
 ---@field chat table<string, string|string[]>
----@field thinking table<string, string|string[]>
 
 ---@class WindowConfig
 ---@field width number
@@ -22,7 +21,6 @@
 ---@field history_limit number
 ---@field save_history boolean
 ---@field history_file unknown
----@field show_thinking boolean
 ---@field auto_scroll boolean
 
 ---@class Config
@@ -38,28 +36,34 @@ local config = {}
 config.defaults = {
   keymaps = {
     input = {
+      -- Insert file with @ trigger in insert mode
+      file_picker = "@",
       close = "<C-c>",
       send_message = "<CR>",
     },
     chat = {
       close = { "<C-c>", "q" },
-      new_session = "<leader>i",
       save_history = "<C-s>",
     },
-    thinking = {
-      close = { "<C-c>", "q" },
+    normal = {
+      open = "<leader>ai",
+      toggle = "<leader>at",
+      clear_history = "<leader>ac",
     },
   },
   -- API settings
   api = {
+    embedding_url = "https://api.openai.com/v1/embeddings",
+    embedding_model = "text-embedding-3-small",
+    embedding_api_key_header = "Authorization",
+    embedding_api_key_format = "Bearer %s",
+    embedding_api_key = "<your api key>",
     url = "your-api-url-here",
     api_key = os.getenv("AI_API_KEY") or "<your api key>", -- Support environment variables
     api_key_header = "Authorization", -- Default header
     api_key_format = "Bearer %s",    -- Default format
     model = "your-ai-model-here",
-    temperature = 0.4,
     max_completion_tokens = 4096,
-    top_p = 0.9,
   },
 
   -- Chat UI settings
@@ -69,12 +73,11 @@ config.defaults = {
     },
 
     -- History settings
-    history_limit = 100,
+    history_limit = 100, -- unused
     save_history = true,
     history_file = vim.fn.stdpath("data") .. "/neoai_chat_history.json",
 
     -- Display settings:
-    show_thinking = true, -- Show AI thinking process
     auto_scroll = true,   -- Auto-scroll to bottom
   },
 
@@ -84,7 +87,6 @@ config.defaults = {
         url = "https://api.groq.com/openai/v1/chat/completions",
         api_key = os.getenv("GROQ_API_KEY") or "<your api key>",
         model = "deepseek-r1-distill-llama-70b",
-        temperature = 0.4,
       },
     },
 
@@ -92,8 +94,7 @@ config.defaults = {
       api = {
         url = "https://api.openai.com/v1/chat/completions",
         api_key = os.getenv("OPENAI_API_KEY") or "<your api key>",
-        model = "gpt-4-turbo-preview",
-        temperature = 0.3,
+        model = "o4-mini",
       },
     },
 
@@ -104,7 +105,6 @@ config.defaults = {
         api_key_header = "x-api-key",
         api_key_format = "%s",
         model = "claude-3-sonnet-20240229",
-        temperature = 0.2,
       },
     },
 
@@ -114,7 +114,6 @@ config.defaults = {
         url = "http://localhost:11434/v1/chat/completions",
         api_key = "", -- No API key needed for local
         model = "llama3.2",
-        temperature = 0.5,
       },
     },
   },

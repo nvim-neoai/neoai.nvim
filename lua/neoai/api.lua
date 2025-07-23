@@ -1,15 +1,27 @@
 local Job = require("plenary.job")
 local conf = require("neoai.config").values.api
+local tool_schemas = require("neoai.ai_tools").tool_schemas
 
 local api = {}
 
 -- Stream AI response
 --- Stream AI response from API
 ---@param messages table List of messages formatted for API request
----@param on_chunk fun(content:string) Callback function invoked with each chunk of content received
----@param on_complete fun() Callback function invoked when streaming completes successfully
+---@param on_content_chunk fun(content:string) Callback function invoked with each chunk of content received
+---@param on_tool_call_chunk fun(tool_calls:table) Callback function invoked with each chunk of tool call received
+---@param on_reasoning_chunk fun(reasons:string) Callback function invoked with each chunk of reasoning received
+---@param on_content_complete fun() Callback function invoked when streaming completes successfully
+---@param on_tool_call_complete fun() Callback function invoked when tool call streaming completes successfully
 ---@param on_error fun(exit_code:number) Callback function invoked when an error occurs, receives exit code
-function api.stream(messages, on_chunk, on_complete, on_error)
+function api.stream(
+    messages,
+    on_content_chunk,
+    on_reasoning_chunk,
+    on_tool_call_chunk,
+    on_content_complete,
+    on_tool_call_complete,
+    on_error
+)
   local payload = vim.fn.json_encode({
     model = conf.model,
     temperature = conf.temperature,
@@ -17,6 +29,7 @@ function api.stream(messages, on_chunk, on_complete, on_error)
     top_p = conf.top_p,
     stream = true,
     messages = messages,
+    tools = tool_schemas,
   })
 
   local api_key_header = conf.api_key_header or "Authorization"
@@ -46,10 +59,22 @@ function api.stream(messages, on_chunk, on_complete, on_error)
             vim.schedule(function()
               local ok, decoded = pcall(vim.fn.json_decode, chunk)
               if ok and decoded then
+                local finished_reason = decoded.choices and decoded.choices[1] and decoded.choices[1].finish_reason
                 local delta = decoded.choices and decoded.choices[1] and decoded.choices[1].delta
                 local content = delta and delta.content
-                if content and content ~= "" then
-                  on_chunk(content)
+                local tool_calls = delta and delta.tool_calls
+                local reasons = delta and delta.reasoning
+                if content and content ~= vim.NIL and content ~= "" then
+                  on_content_chunk(content)
+                elseif tool_calls then
+                  on_tool_call_chunk(tool_calls)
+                elseif reasons and reasons ~= vim.NIL and reasons ~= "" then
+                  on_reasoning_chunk(reasons)
+                end
+                if finished_reason == "stop" then
+                  on_content_complete()
+                elseif finished_reason == "tool_calls" then
+                  on_tool_call_complete()
                 end
               end
             end)
@@ -59,9 +84,7 @@ function api.stream(messages, on_chunk, on_complete, on_error)
     end,
     on_exit = function(_, exit_code)
       vim.schedule(function()
-        if exit_code == 0 then
-          on_complete()
-        else
+        if exit_code ~= 0 then
           on_error(exit_code)
         end
       end)
