@@ -24,11 +24,11 @@ function M.select_file()
         local bufnr = vim.api.nvim_get_current_buf()
         local cursor = vim.api.nvim_win_get_cursor(0)
         local row, col = cursor[1], cursor[2]
-        local insert_text = "`@" .. filepath .. "`"
+        local insert_text = "`" .. filepath .. "`"
         -- Replace the typed '@' (one character before cursor) with our insert_text
-        vim.api.nvim_buf_set_text(bufnr, row - 1, col - 1, row - 1, col, { insert_text })
+        vim.api.nvim_buf_set_text(bufnr, row - 1, col + 1, row - 1, col + 1, { insert_text })
         -- Move cursor to end of inserted text
-        vim.api.nvim_win_set_cursor(0, { row, col - 1 + #insert_text })
+        vim.api.nvim_win_set_cursor(0, { row, col + 1 + #insert_text })
       end)
       return true
     end,
