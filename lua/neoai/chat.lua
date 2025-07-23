@@ -1,6 +1,7 @@
 local chat = {}
 
 local ai_tools = require("neoai.ai_tools")
+local prompt = require("neoai.prompt")
 
 -- Message types
 local MESSAGE_TYPES = {
@@ -207,10 +208,14 @@ end
 -- Send message to AI
 function chat.send_to_ai()
   -- Build message history for API
+
+  local data = {}
+  data["tools"] = chat.format_tools()
+
   local messages = {}
 
   -- Add system prompt
-  local system_prompt = chat.get_system_prompt()
+  local system_prompt = prompt.get_system_prompt(data)
   table.insert(messages, {
     role = "system",
     content = system_prompt,
@@ -274,57 +279,18 @@ chat.get_tool_calls = function(tool_schemas)
   chat.send_to_ai()
 end
 
--- Format tools into a string for %tools substitution
+-- Format tools into a comma-separated string of tool names
 chat.format_tools = function()
-  local entries = {}
-
+  local names = {}
   for _, tool in ipairs(ai_tools.tool_schemas) do
     if tool.type == "function" and tool["function"] then
       local fn = tool["function"]
-      local args = {}
-
-      local properties = fn.parameters and fn.parameters.properties or {}
-      local required = fn.parameters and fn.parameters.required or {}
-
-      local function is_required(arg)
-        for _, r in ipairs(required) do
-          if r == arg then
-            return true
-          end
-        end
-        return false
+      if fn.name then
+        table.insert(names, fn.name)
       end
-
-      for arg, def in pairs(properties) do
-        table.insert(
-          args,
-          string.format(
-            "  - %s: %s - %s%s",
-            arg,
-            def.type or "any",
-            def.description or "No description",
-            is_required(arg) and " (required)" or ""
-          )
-        )
-      end
-
-      local entry = string.format(
-        [[
-Tool Name: %s
-Tool Description: %s
-Tool Arguments:
-%s
-]],
-        fn.name or "Unnamed Tool",
-        fn.description or "No description",
-        next(args) and table.concat(args, "\n") or "  (no arguments)"
-      )
-
-      table.insert(entries, entry)
     end
   end
-
-  return table.concat(entries, "\n")
+  return table.concat(names, ", ")
 end
 
 -- Stream AI response
@@ -353,7 +319,7 @@ function chat.stream_ai_response(messages)
         for _, existing_call in ipairs(tool_calls_response) do
           if existing_call.index == tool_call.index then
             existing_call["function"].arguments = (existing_call["function"].arguments or "")
-              .. (tool_call["function"].arguments or "")
+                .. (tool_call["function"].arguments or "")
             found = true
             break
           end
@@ -436,42 +402,6 @@ function chat.update_streaming_message(content)
       break
     end
   end
-end
-
-local function get_plugin_dir()
-  local info = debug.getinfo(1, "S")
-  return info.source:sub(2):match("(.*/)")
-end
-
--- Get prompt template
-function chat.get_prompt_template()
-  local template_path = get_plugin_dir() .. "system_prompt.md"
-  local file, err = io.open(template_path, "r")
-  if not file then
-    print("Failed to open file:", err)
-    return nil
-  end
-  local prompt_template = file:read("*a")
-  file:close()
-  return prompt_template
-end
-
--- Get system prompt
-function chat.get_system_prompt()
-  local prompt_template = chat.get_prompt_template()
-
-  local data = {}
-  data["tools"] = chat.format_tools()
-
-  local message = ""
-
-  if prompt_template then
-    message = prompt_template:gsub("%%(%w+)", function(key)
-      return data[key] or ""
-    end)
-  end
-
-  return message
 end
 
 -- Save history to file
