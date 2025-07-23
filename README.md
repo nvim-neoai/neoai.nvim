@@ -154,3 +154,7 @@ require("neoai").setup({
 - Verify Neovim version (>=0.7 recommended).
 
 For advanced help, open an issue on GitHub.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
