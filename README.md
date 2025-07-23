@@ -9,7 +9,6 @@ A powerful AI-enhanced chat interface for Neovim, featuring streaming responses,
 - **Tool Calls**: Automatic invocation of file-based tools (read, write, project structure, multi-edit, LSP diagnostics, semantic search, web search)
 - **File Picker**: Quickly insert file paths into prompts using Telescope (`@` trigger)
 - **Message History**: Persistent conversation history with save, load, and clear operations
-- **Semantic Code Search**: Build and query a vector index of your codebase with `:NeoAIIndex` and `:NeoAISearch`
 - **Customizable Configuration**: Configure API provider, model, UI layout, keymaps, and more via `require('neoai').setup()`
 - **Multiple Providers & Presets**: Built-in presets for OpenAI, Groq, Anthropic, Ollama (local), or custom endpoints
 - **LSP Diagnostics Integration**: Read and display LSP diagnostics alongside file contents
@@ -105,7 +104,6 @@ require("neoai").setup({
 - `:NeoAIChatClear`    - Clear current chat session and history file
 - `:NeoAIChatSave`     - Save chat history immediately
 - `:NeoAICheckError [file]` - Read file contents and show LSP diagnostics
-- `:NeoAIIndex`        - Build vector index of your codebase
 - `:NeoAISearch <query>` - Query the semantic index for relevant code snippets
 
 ## Keymaps

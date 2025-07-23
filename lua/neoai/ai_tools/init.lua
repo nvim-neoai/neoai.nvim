@@ -10,7 +10,6 @@ local tool_names = {
   "project_structure",
   "multi_edit",
   "lsp_diagnostic",
-  -- "vector_search",
 }
 
 -- Load tools dynamically
