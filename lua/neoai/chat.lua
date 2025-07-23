@@ -24,6 +24,7 @@ function chat.setup()
     buffers = {},
     current_session = nil,
     is_open = false,
+    streaming_active = false, -- Track streaming state
   }
   chat.chat_state.config = require("neoai.config").values.chat
 
@@ -48,6 +49,7 @@ local scroll_to_bottom = function(bufnr)
     end
   end
 end
+
 -- Update chat display
 local function update_chat_display()
   if not chat.chat_state.is_open or not chat.chat_state.current_session then
@@ -187,6 +189,12 @@ function chat.send_message()
     return
   end
 
+  -- Don't allow sending new messages while streaming
+  if chat.chat_state.streaming_active then
+    vim.notify("Please wait for the current response to complete", vim.log.levels.WARN)
+    return
+  end
+
   -- Get input
   local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.input, 0, -1, false)
   local message = table.concat(lines, "\n"):gsub("^%s*(.-)%s*$", "%1")
@@ -208,7 +216,6 @@ end
 -- Send message to AI
 function chat.send_to_ai()
   -- Build message history for API
-
   local data = {}
   data["tools"] = chat.format_tools()
 
@@ -261,22 +268,106 @@ function chat.send_to_ai()
   chat.stream_ai_response(messages)
 end
 
+-- Handle tool calls with proper error handling and timeout
 chat.get_tool_calls = function(tool_schemas)
+  -- Validate tool_schemas
+  if not tool_schemas or type(tool_schemas) ~= "table" or #tool_schemas == 0 then
+    vim.notify("Invalid or empty tool calls received", vim.log.levels.WARN)
+    chat.chat_state.streaming_active = false
+    return
+  end
+
+  -- Add tool call message
   chat.add_message(MESSAGE_TYPES.ASSISTANT, "**Tool call**", {}, nil, tool_schemas)
+
   local tools = ai_tools.tools
+  local tool_responses_completed = 0
+  local total_tools = 0
+
+  -- Count valid tool calls
+  for _, tool_schema in ipairs(tool_schemas) do
+    if tool_schema.type == "function" and tool_schema["function"] and tool_schema["function"].name then
+      total_tools = total_tools + 1
+    end
+  end
+
+  if total_tools == 0 then
+    vim.notify("No valid tool calls found", vim.log.levels.WARN)
+    chat.chat_state.streaming_active = false
+    return
+  end
+
+  -- Execute tool calls
   for _, tool_schema in ipairs(tool_schemas) do
     if tool_schema.type == "function" and tool_schema["function"] then
       local fn = tool_schema["function"]
-      for _, tool in ipairs(tools) do
-        if tool.meta.name == fn.name then
-          local args = vim.fn.json_decode(fn.arguments)
-          local tool_response = tool.run(args)
-          chat.add_message(MESSAGE_TYPES.TOOL, tool_response, {}, tool_schema.id)
+      if fn.name then
+        local tool_found = false
+
+        for _, tool in ipairs(tools) do
+          if tool.meta.name == fn.name then
+            tool_found = true
+
+            -- Parse arguments with error handling
+            local ok, args = pcall(function()
+              if fn.arguments and fn.arguments ~= "" then
+                return vim.fn.json_decode(fn.arguments)
+              else
+                return {}
+              end
+            end)
+
+            if not ok then
+              vim.notify(
+                "Failed to parse tool arguments for " .. fn.name .. ": " .. tostring(args),
+                vim.log.levels.ERROR
+              )
+              args = {}
+            end
+
+            -- Execute tool with error handling
+            local tool_ok, tool_response = pcall(function()
+              return tool.run(args)
+            end)
+
+            if not tool_ok then
+              tool_response = "Error executing tool " .. fn.name .. ": " .. tostring(tool_response)
+              vim.notify(tool_response, vim.log.levels.ERROR)
+            end
+
+            -- Add tool response
+            chat.add_message(MESSAGE_TYPES.TOOL, tool_response or "No response", {}, tool_schema.id)
+            tool_responses_completed = tool_responses_completed + 1
+            break
+          end
         end
+
+        if not tool_found then
+          local error_msg = "Tool not found: " .. fn.name
+          vim.notify(error_msg, vim.log.levels.ERROR)
+          chat.add_message(MESSAGE_TYPES.TOOL, error_msg, {}, tool_schema.id)
+          tool_responses_completed = tool_responses_completed + 1
+        end
+      else
+        vim.notify("Tool call missing function name", vim.log.levels.ERROR)
+        tool_responses_completed = tool_responses_completed + 1
       end
+    else
+      vim.notify("Invalid tool call format", vim.log.levels.ERROR)
+      tool_responses_completed = tool_responses_completed + 1
     end
   end
-  chat.send_to_ai()
+
+  -- Continue conversation after all tools are executed
+  if tool_responses_completed == total_tools then
+    -- Small delay to ensure UI updates are complete
+    vim.defer_fn(function()
+      chat.send_to_ai()
+    end, 100)
+  else
+    vim.notify("Not all tool calls completed successfully", vim.log.levels.WARN)
+    chat.chat_state.streaming_active = false
+  end
 end
 
 -- Format tools into a comma-separated string of tool names
@@ -293,45 +384,103 @@ chat.format_tools = function()
   return table.concat(names, ", ")
 end
 
--- Stream AI response
+-- Stream AI response with improved error handling
 function chat.stream_ai_response(messages)
   local api = require("neoai.api")
+
+  -- Set streaming state
+  chat.chat_state.streaming_active = true
 
   local reason_response = ""
   local content_response = ""
   local tool_calls_response = {}
   local response_start_time = os.time()
+  local stream_timeout = 60
+  local last_activity = os.time()
+
+  -- Timeout checker
+  local timeout_timer = vim.loop.new_timer()
+  timeout_timer:start(
+    1000,
+    1000,
+    vim.schedule_wrap(function()
+      if os.time() - last_activity > stream_timeout then
+        timeout_timer:stop()
+        timeout_timer:close()
+        chat.chat_state.streaming_active = false
+        chat.add_message(
+          MESSAGE_TYPES.ERROR,
+          "Stream timeout - no response received for " .. stream_timeout .. " seconds",
+          {
+            timeout = true,
+          }
+        )
+        update_chat_display()
+      end
+    end)
+  )
 
   api.stream(
     messages,
     -- streaming callback
     function(content_chunk)
-      content_response = content_response .. content_chunk
-      chat.update_streaming_message(content_response)
+      last_activity = os.time()
+      if content_chunk and content_chunk ~= "" then
+        content_response = content_response .. content_chunk
+        chat.update_streaming_message(content_response)
+      end
     end,
     function(reason_chunk)
-      reason_response = reason_response .. reason_chunk
+      last_activity = os.time()
+      if reason_chunk and reason_chunk ~= "" then
+        reason_response = reason_response .. reason_chunk
+      end
     end,
     -- tool call callback
     function(tool_calls_chunk)
-      for _, tool_call in ipairs(tool_calls_chunk) do
-        local found = false
-        for _, existing_call in ipairs(tool_calls_response) do
-          if existing_call.index == tool_call.index then
-            existing_call["function"].arguments = (existing_call["function"].arguments or "")
-                .. (tool_call["function"].arguments or "")
-            found = true
-            break
+      last_activity = os.time()
+      if tool_calls_chunk and type(tool_calls_chunk) == "table" then
+        for _, tool_call in ipairs(tool_calls_chunk) do
+          if tool_call and tool_call.index then
+            local found = false
+            for _, existing_call in ipairs(tool_calls_response) do
+              if existing_call.index == tool_call.index then
+                -- Merge tool call arguments
+                if tool_call["function"] and tool_call["function"].arguments then
+                  existing_call["function"] = existing_call["function"] or {}
+                  existing_call["function"].arguments = (existing_call["function"].arguments or "")
+                    .. tool_call["function"].arguments
+                end
+                found = true
+                break
+              end
+            end
+            -- If not already tracked, add the new tool_call
+            if not found then
+              -- Ensure we have a complete tool call structure
+              local complete_tool_call = {
+                index = tool_call.index,
+                id = tool_call.id,
+                type = tool_call.type or "function",
+                ["function"] = {
+                  name = tool_call["function"] and tool_call["function"].name or "",
+                  arguments = tool_call["function"] and tool_call["function"].arguments or "",
+                },
+              }
+              table.insert(tool_calls_response, complete_tool_call)
+            end
           end
-        end
-        -- If not already tracked, add the new tool_call
-        if not found then
-          table.insert(tool_calls_response, tool_call)
         end
       end
     end,
     -- streaming complete callback
     function()
+      -- Stop timeout timer
+      if timeout_timer then
+        timeout_timer:stop()
+        timeout_timer:close()
+      end
+
       local _message = ""
 
       if reason_response and reason_response ~= "" then
@@ -341,22 +490,46 @@ function chat.stream_ai_response(messages)
         _message = _message .. content_response
       end
 
-      if not messages then
-        return
+      -- Only add message if we have content or this is the end of streaming
+      if _message ~= "" or not (#tool_calls_response > 0) then
+        chat.add_message(MESSAGE_TYPES.ASSISTANT, _message, {
+          response_time = os.time() - response_start_time,
+        })
       end
 
-      chat.add_message(MESSAGE_TYPES.ASSISTANT, _message, {
-        response_time = os.time() - response_start_time,
-      })
-
+      -- Update display before potentially calling tools
       update_chat_display()
+
+      -- Reset streaming state if no tool calls
+      if not tool_calls_response or #tool_calls_response == 0 then
+        chat.chat_state.streaming_active = false
+      end
     end,
     -- tool call complete callback
     function()
-      chat.get_tool_calls(tool_calls_response)
+      -- Stop timeout timer
+      if timeout_timer then
+        timeout_timer:stop()
+        timeout_timer:close()
+      end
+
+      if tool_calls_response and #tool_calls_response > 0 then
+        -- Process tool calls
+        chat.get_tool_calls(tool_calls_response)
+      else
+        -- No tool calls, streaming is complete
+        chat.chat_state.streaming_active = false
+      end
     end,
     -- error callback
     function(exit_code)
+      -- Stop timeout timer
+      if timeout_timer then
+        timeout_timer:stop()
+        timeout_timer:close()
+      end
+
+      chat.chat_state.streaming_active = false
       chat.add_message(MESSAGE_TYPES.ERROR, "Failed to get response from AI", {
         exit_code = exit_code,
       })
@@ -385,6 +558,7 @@ function chat.update_streaming_message(content)
 
       -- Add streaming response
       table.insert(new_lines, "**Assistant:** " .. "*" .. os.date("%Y-%m-%d %H:%M:%S") .. "*")
+      table.insert(new_lines, "")
       local content_lines = vim.split(content, "\n")
       for _, line in ipairs(content_lines) do
         table.insert(new_lines, "  " .. line)
