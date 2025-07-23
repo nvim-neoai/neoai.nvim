@@ -1,52 +1,49 @@
 # NeoAI.nvim
 
-A powerful AI chat interface for Neovim with message history and streaming responses.
+A powerful AI-enhanced chat interface for Neovim, featuring streaming responses, file operations, semantic code search, and customizable UI.
 
 ## Features
 
-- **Interactive Chat UI**: Full-featured chat interface with floating windows
-- **Message History**: Persistent conversation history with automatic saving and instant clearing
-- **Thinking Process**: See how the AI processes your requests step by step
-- **Tool Call Process**: See how the AI processes tool calls
-- **Streaming Responses**: Real-time response streaming for better user experience
-- **Multiple AI Providers**: Support for OpenAI, Groq, Anthropic, and local models
-- **Syntax Highlighting**: Beautiful syntax highlighting for chat messages
-- **Session Management**: Create new sessions, save/load history
-- **Customizable UI**: Configurable window size and keymaps
+- **Interactive Chat UI**: Split-window chat interface with Markdown rendering
+- **Streaming Responses**: Real-time assistant replies with response time display
+- **Tool Calls**: Automatic invocation of file-based tools (read, write, project structure, multi-edit, LSP diagnostics, semantic search, web search)
+- **File Picker**: Quickly insert file paths into prompts using Telescope (`@` trigger)
+- **Message History**: Persistent conversation history with save, load, and clear operations
+- **Semantic Code Search**: Build and query a vector index of your codebase with `:NeoAIIndex` and `:NeoAISearch`
+- **Customizable Configuration**: Configure API provider, model, UI layout, keymaps, and more via `require('neoai').setup()`
+- **Multiple Providers & Presets**: Built-in presets for OpenAI, Groq, Anthropic, Ollama (local), or custom endpoints
+- **LSP Diagnostics Integration**: Read and display LSP diagnostics alongside file contents
 
 ## Installation
 
-### Using [lazy.nvim](https://github.com/folke/lazy.nvim)
+### Using lazy.nvim
 
 ```lua
-{
+{  
   "PhoneMinThu/neoai.nvim",
   dependencies = {
     "nvim-lua/plenary.nvim",
+    "nvim-telescope/telescope.nvim",
   },
   config = function()
     require("neoai").setup({
-      api = {
-        preset = "chosen-preset-here",
-        api_key = "your-api-key-here",
-      },
+      preset = "openai",      -- or "groq", "anthropic", "ollama"
+      api = { api_key = "YOUR_API_KEY" },
     })
   end,
 }
 ```
 
-### Using [packer.nvim](https://github.com/wbthomason/packer.nvim)
+### Using packer.nvim
 
 ```lua
 use {
   "PhoneMinThu/neoai.nvim",
-  requires = { "nvim-lua/plenary.nvim" },
+  requires = { "nvim-lua/plenary.nvim", "nvim-telescope/telescope.nvim" },
   config = function()
     require("neoai").setup({
-      api = {
-        preset = "chosen-preset-here",
-        api_key = "your-api-key-here",
-      },
+      preset = "openai",
+      api = { api_key = "YOUR_API_KEY" },
     })
   end,
 }
@@ -54,128 +51,91 @@ use {
 
 ## Configuration
 
-### Basic Setup
+Call `require('neoai').setup(opts)` with any of the following options:
 
 ```lua
 require("neoai").setup({
-  api = {
-    url = "your-api-url-here",
-    api_key = "your-api-key-here",
-    model = "deepseek-r1-distill-llama-70b",
-    temperature = 0.4,
-  },
-  chat = {
-    window = {
-      width = 80,
-    },
-    auto_scroll = true,
-  },
-})
-```
+  -- Select a built-in preset (openai, groq, anthropic, ollama) or omit for custom
+  preset = "openai",
 
-### Full Configuration
-
-```lua
-require("neoai").setup({
-  -- API settings
+  -- Override API settings if needed
   api = {
-    url = "https://api.groq.com/openai/v1/chat/completions",
-    api_key = "your-api-key-here",
-    model = "deepseek-r1-distill-llama-70b",
-    temperature = 0.4,
-    max_completion_tokens = 4096,
-    top_p = 0.9,
+    url     = "https://api.openai.com/v1/chat/completions",
+    api_key = "YOUR_API_KEY",
+    model   = "gpt-4",
+    temperature            = 0.7,
+    max_completion_tokens  = 4096,
+    top_p                  = 1,
+    api_key_header         = "Authorization",
+    api_key_format         = "Bearer %s",
   },
 
   -- Chat UI settings
   chat = {
-    window = {
-      width = 80,
-    },
-
-    -- History settings
-    history_limit = 100,
+    window = { width = 80 },
+    auto_scroll = true,
     save_history = true,
     history_file = vim.fn.stdpath("data") .. "/neoai_chat_history.json",
+  },
 
-    -- Display settings
-    auto_scroll = true,
+  -- Override default keymaps (see lua/neoai/config.lua for defaults)
+  keymaps = {
+    normal = {
+      open          = "<leader>ai",
+      toggle        = "<leader>at",
+      clear_history = "<leader>ac",
+    },
+    input = {
+      file_picker  = "@",     -- insert file path
+      send_message = "<CR>",
+      close        = "<C-c>",
+    },
+    chat = {
+      close        = {"<C-c>", "q"},
+      save_history = "<C-s>",
+    },
   },
 })
 ```
 
-### Using Presets
+## Commands
 
-```lua
--- Use OpenAI preset
-require("neoai").setup({
-  preset = "openai",
-  api = { api_key = "your-openai-key" },
-})
-```
+- `:NeoAIChat`         - Open the chat interface
+- `:NeoAIChatToggle`   - Toggle chat interface
+- `:NeoAIChatClear`    - Clear current chat session and history file
+- `:NeoAIChatSave`     - Save chat history immediately
+- `:NeoAICheckError [file]` - Read file contents and show LSP diagnostics
+- `:NeoAIIndex`        - Build vector index of your codebase
+- `:NeoAISearch <query>` - Query the semantic index for relevant code snippets
 
-```lua
--- Use Ollama (local) preset
-require("neoai").setup({
-  preset = "ollama",
-})
-```
+## Keymaps
 
-### Customizing API Key Header/Format
+**In Normal Mode** (global):
 
-Some providers require a custom API key header or format. You can set these fields in your config or preset:
+- `<leader>ai` - Open Chat
+- `<leader>at` - Toggle Chat
+- `<leader>ac` - Clear Chat History
 
-```lua
-require("neoai").setup({
-  api = {
-    api_key = "your-key-here",
-    api_key_header = "x-api-key",      -- For Anthropic
-    api_key_format = "%s",             -- For Anthropic (no Bearer)
-    -- ...other fields...
-  },
-})
-```
+**In Chat Input Buffer**:
 
-Or, when using a preset (Anthropic example):
+- `<CR>`       - Send Message
+- `<C-c>`      - Close Chat
+- `@`          - Trigger file picker (inserts `` `@path/to/file` ``)
 
-```lua
-require("neoai").setup({
-  preset = "anthropic",
-  api = {
-    api_key = "your-anthropic-api-key",
-    -- api_key_header and api_key_format are set by the preset
-  },
-})
-```
+**In Chat History Buffer**:
 
-- `api_key_header` (default: `"Authorization"`): The HTTP header name for the API key.
-- `api_key_format` (default: `"Bearer %s"`): The format string for the API key value. Use `"%s"` for plain keys.
+- `<C-c>` or `q` - Close Chat
+- `<C-s>`       - Save History
 
 ## Usage
 
-### Commands
+1. Open chat with `:NeoAIChat` or `<leader>ai`.
+2. Type your message in the input box and press `<CR>` to send.
+3. Watch streaming assistant responses in the chat pane.
+4. Trigger file operations by asking the AI or typing `@` to insert file paths.
+5. Invoke semantic code search with `:NeoAISearch your query`.
 
-- `:NeoAIChat` - Open the chat interface
-- `:NeoAIChatToggle` - Toggle chat interface
-- `:NeoAIChatClear` - Clear chat history (history file is updated immediately)
-- `:NeoAIChatSave` - Save chat history
-- `:NeoAIChatLoad` - Load chat history
-
-### Keymaps
-
-**Default Keymaps:**
-
-- `<CR>` (Enter) — Send message (input box)
-- `<C-c>` — Close chat (input and chat boxes)
-- `q` — Close chat (chat box)
-- `<C-s>` — Save history (chat box)
-- `<leader>ai` - Open Chat
-- `<leader>at` - Toggle Chat
-- `<leader>ac` - Clear History
-
-Keymaps are configured in the setup function under the `keymaps` field. See `lua/neoai/config.lua` for all defaults.
-
-### Chat Interface Layout
+## UI Layout
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -187,122 +147,10 @@ Keymaps are configured in the setup function under the `keymaps` field. See `lua
 └──────────────────────────────────────────────────────────┘
 ```
 
-## API Provider Setup
-
-### Groq (Default)
-
-1. Sign up at [Groq Console](https://console.groq.com/)
-2. Get your API key
-3. Configure:
-
-```lua
-require("neoai").setup({
-  preset = "groq",
-  api = {
-    api_key = "your-groq-api-key",
-  },
-})
-```
-
-### OpenAI
-
-```lua
-require("neoai").setup({
-  preset = "openai",
-  api = {
-    api_key = "your-openai-api-key",
-  },
-})
-```
-
-### Anthropic
-
-```lua
-require("neoai").setup({
-  preset = "anthropic",
-  api = {
-    api_key = "your-anthropic-api-key",
-  },
-})
-```
-
-### Local Models (Ollama)
-
-1. Install [Ollama](https://ollama.ai/)
-2. Pull a model: `ollama pull llama3.2`
-3. Configure:
-
-```lua
-require("neoai").setup({
-  preset = "ollama",
-})
-```
-
-## Advanced Features
-
-### Message History
-
-- Automatically saves conversation history to `~/.local/share/nvim/neoai_chat_history.json`
-- Loads previous session on startup (creates a new session only if none exists)
-- Clearing chat history updates the file immediately
-- Supports multiple sessions
-- Configurable history limit
-
-### AI Context Window
-
-- Only the last 10 user/assistant messages are sent to the AI for context by default (configurable in code)
-- If you want the AI to always remember certain facts, increase this limit or add facts to the system prompt
-
-### Streaming Responses
-
-- Real-time response display
-- Shows response time
-- Graceful error handling
-- Auto-scrolling to latest content
-
 ## Troubleshooting
 
-### Common Issues
+- Ensure `plenary.nvim` and `telescope.nvim` are installed.
+- Check for errors with `:messages`.
+- Verify Neovim version (>=0.7 recommended).
 
-1. **API Key Not Set**
-   - Make sure to set your API key in the configuration
-   - Check that the key is valid and has proper permissions
-
-2. **Network Issues**
-   - Verify internet connection
-   - Check if the API endpoint is accessible
-   - Try with a different model
-
-3. **Chat Not Opening**
-   - Ensure plenary.nvim is installed
-   - Check for Lua errors with `:messages`
-   - Verify your Neovim version (requires 0.7+)
-
-### Debug Mode
-
-Enable debug logging:
-
-```lua
-require("neoai").setup({
-  debug = true,
-  -- other config...
-})
-```
-
-### Check Dependencies
-
-```lua
-:checkhealth neoai
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-## License
-
-MIT License - see LICENSE file for details
+For advanced help, open an issue on GitHub.

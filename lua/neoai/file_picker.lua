@@ -22,7 +22,8 @@ function M.select_file()
         actions.close(prompt_bufnr)
         -- Insert into input buffer at cursor
         local bufnr = vim.api.nvim_get_current_buf()
-        local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+        local cursor = vim.api.nvim_win_get_cursor(0)
+        local row, col = cursor[1], cursor[2]
         local insert_text = "`@" .. filepath .. "`"
         -- Replace the typed '@' (one character before cursor) with our insert_text
         vim.api.nvim_buf_set_text(bufnr, row - 1, col - 1, row - 1, col, { insert_text })
