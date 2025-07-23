@@ -36,6 +36,8 @@ local config = {}
 config.defaults = {
   keymaps = {
     input = {
+      -- Insert file with @ trigger in insert mode
+      file_picker = "@",
       close = "<C-c>",
       send_message = "<CR>",
     },
