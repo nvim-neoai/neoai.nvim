@@ -50,7 +50,7 @@ M.run = function(args)
 
   local file, err = io.open(abs_path, "r")
   if not file then
-    return "Cannot open file: " .. abs_path
+    return "Cannot open file: " .. abs_path .. ": " .. tostring(err)
   end
   local content = file:read("*a")
   file:close()
