@@ -45,7 +45,8 @@ M.run = function(args)
   local current_line = 1
   for line in file:lines() do
     if current_line >= start_line and current_line <= end_line then
-      table.insert(lines, line)
+      local width = #tostring(end_line) -- max digits of the highest line number
+      table.insert(lines, string.format("%" .. width .. "d| %s", current_line, line))
     end
     if current_line > end_line then
       break
@@ -61,7 +62,8 @@ M.run = function(args)
   local ext = get_extension(path)
   local text = table.concat(lines, "\n")
   local result = utils.make_code_block(text, ext)
-  -- After reading, append LSP diagnostics if file
+
+  -- Append LSP diagnostics
   local diag = require("neoai.ai_tools.lsp_diagnostic").run({ file_path = args.file_path })
   return result .. "\n" .. diag
 end

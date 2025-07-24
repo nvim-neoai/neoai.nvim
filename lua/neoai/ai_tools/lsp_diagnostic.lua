@@ -6,23 +6,26 @@ M.meta = {
   description = [[
     Retrieves LSP diagnostics for a given file (or current buffer if none provided) and formats them.
     Uses vim.lsp.diagnostic for compatibility and vim.diagnostic for gathering.
+    Additionally, it can retrieve available LSP code actions at the current cursor position.
   ]],
+
   parameters = {
     type = "object",
     properties = {
+      include_code_actions = {
+        type = "boolean",
+        description = "(Optional) When true, also retrieve available code actions for the file.",
+      },
       file_path = {
-        type = "string",
-        description = string.format(
-          "(Optional) The path of the file to check (relative to cwd %s). If omitted, uses current buffer.",
-          vim.fn.getcwd()
-        ),
+        type = "boolean",
+        description = "(Optional) When true, also retrieve available code actions for the file.",
       },
     },
+    required = { "include_code_actions", "file_path" },
     additionalProperties = false,
   },
 }
 
--- Map numeric severity to human-readable
 local severity_map = {
   [vim.diagnostic.severity.ERROR] = "Error",
   [vim.diagnostic.severity.WARN] = "Warn",
@@ -74,7 +77,15 @@ M.run = function(args)
   end
 
   local text = table.concat(lines, "\n")
-  return utils.make_code_block(text, "txt")
+  -- Base diagnostics output
+  local result = utils.make_code_block(text, "txt")
+  -- Append code actions if requested
+  if args.include_code_actions then
+    local code_action_tool = require("neoai.ai_tools.lsp_code_action")
+    local ca = code_action_tool.run({ file_path = args.file_path })
+    result = result .. "\n\n" .. ca
+  end
+  return result
 end
 
 return M

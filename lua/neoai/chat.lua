@@ -422,58 +422,56 @@ function chat.stream_ai_response(messages)
 
   api.stream(
     messages,
-    -- streaming callback
-    function(content_chunk)
+    -- Single chunk callback
+    function(chunk)
       last_activity = os.time()
-      if content_chunk and content_chunk ~= "" then
-        content_response = content_response .. content_chunk
-        chat.update_streaming_message(content_response)
-      end
-    end,
-    function(reason_chunk)
-      last_activity = os.time()
-      if reason_chunk and reason_chunk ~= "" then
-        reason_response = reason_response .. reason_chunk
-      end
-    end,
-    -- tool call callback
-    function(tool_calls_chunk)
-      last_activity = os.time()
-      if tool_calls_chunk and type(tool_calls_chunk) == "table" then
-        for _, tool_call in ipairs(tool_calls_chunk) do
-          if tool_call and tool_call.index then
-            local found = false
-            for _, existing_call in ipairs(tool_calls_response) do
-              if existing_call.index == tool_call.index then
-                -- Merge tool call arguments
-                if tool_call["function"] and tool_call["function"].arguments then
-                  existing_call["function"] = existing_call["function"] or {}
-                  existing_call["function"].arguments = (existing_call["function"].arguments or "")
-                    .. tool_call["function"].arguments
+
+      if chunk.type == "content" then
+        if chunk.data and chunk.data ~= "" then
+          content_response = content_response .. chunk.data
+          chat.update_streaming_message(content_response)
+        end
+      elseif chunk.type == "reasoning" then
+        if chunk.data and chunk.data ~= "" then
+          reason_response = reason_response .. chunk.data
+        end
+      elseif chunk.type == "tool_calls" then
+        if chunk.data and type(chunk.data) == "table" then
+          for _, tool_call in ipairs(chunk.data) do
+            if tool_call and tool_call.index then
+              local found = false
+              for _, existing_call in ipairs(tool_calls_response) do
+                if existing_call.index == tool_call.index then
+                  -- Merge tool call arguments
+                  if tool_call["function"] and tool_call["function"].arguments then
+                    existing_call["function"] = existing_call["function"] or {}
+                    existing_call["function"].arguments = (existing_call["function"].arguments or "")
+                        .. tool_call["function"].arguments
+                  end
+                  found = true
+                  break
                 end
-                found = true
-                break
               end
-            end
-            -- If not already tracked, add the new tool_call
-            if not found then
-              -- Ensure we have a complete tool call structure
-              local complete_tool_call = {
-                index = tool_call.index,
-                id = tool_call.id,
-                type = tool_call.type or "function",
-                ["function"] = {
-                  name = tool_call["function"] and tool_call["function"].name or "",
-                  arguments = tool_call["function"] and tool_call["function"].arguments or "",
-                },
-              }
-              table.insert(tool_calls_response, complete_tool_call)
+              -- If not already tracked, add the new tool_call
+              if not found then
+                -- Ensure we have a complete tool call structure
+                local complete_tool_call = {
+                  index = tool_call.index,
+                  id = tool_call.id,
+                  type = tool_call.type or "function",
+                  ["function"] = {
+                    name = tool_call["function"] and tool_call["function"].name or "",
+                    arguments = tool_call["function"] and tool_call["function"].arguments or "",
+                  },
+                }
+                table.insert(tool_calls_response, complete_tool_call)
+              end
             end
           end
         end
       end
     end,
-    -- streaming complete callback
+    -- Single completion callback
     function()
       -- Stop timeout timer
       if timeout_timer then
@@ -490,8 +488,9 @@ function chat.stream_ai_response(messages)
         _message = _message .. content_response
       end
 
-      -- Only add message if we have content or this is the end of streaming
-      if _message ~= "" or not (#tool_calls_response > 0) then
+      -- Always add the assistant message if we have any content
+      -- This handles cases where AI streams both content AND tool calls
+      if _message ~= "" then
         chat.add_message(MESSAGE_TYPES.ASSISTANT, _message, {
           response_time = os.time() - response_start_time,
         })
@@ -500,28 +499,16 @@ function chat.stream_ai_response(messages)
       -- Update display before potentially calling tools
       update_chat_display()
 
-      -- Reset streaming state if no tool calls
-      if not tool_calls_response or #tool_calls_response == 0 then
-        chat.chat_state.streaming_active = false
-      end
-    end,
-    -- tool call complete callback
-    function()
-      -- Stop timeout timer
-      if timeout_timer then
-        timeout_timer:stop()
-        timeout_timer:close()
-      end
-
+      -- Handle tool calls if present
       if tool_calls_response and #tool_calls_response > 0 then
-        -- Process tool calls
+        -- Process tool calls (this will continue the conversation)
         chat.get_tool_calls(tool_calls_response)
       else
         -- No tool calls, streaming is complete
         chat.chat_state.streaming_active = false
       end
     end,
-    -- error callback
+    -- Error callback
     function(exit_code)
       -- Stop timeout timer
       if timeout_timer then

@@ -3,7 +3,14 @@ local utils = require("neoai.ai_tools.utils")
 
 M.meta = {
   name = "Grep",
-  description = "Live grep using ripgrep (rg). Detect keyword from user message and grep it.",
+  description = [[
+- Fast content search tool that works with any codebase size
+- Searches file contents using regular expressions
+- Supports full regex syntax (eg. "log.*Error", "function\\\\s+\\\\w+", etc.)
+- Filter files by pattern with the include parameter (eg. "*.js", "*.{ts,tsx}")
+- Returns file paths with at least one match
+- Use this tool when you need to find files containing specific patterns
+]],
   parameters = {
     type = "object",
     properties = {
