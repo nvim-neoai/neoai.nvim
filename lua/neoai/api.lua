@@ -4,6 +4,18 @@ local tool_schemas = require("neoai.ai_tools").tool_schemas
 
 local api = {}
 
+-- Utility to merge tables
+local function merge_tables(t1, t2)
+  local result = {}
+  for k, v in pairs(t1) do
+    result[k] = v
+  end
+  for k, v in pairs(t2) do
+    result[k] = v
+  end
+  return result
+end
+
 -- Stream AI response
 --- Stream AI response from API
 ---@param messages table List of messages formatted for API request
@@ -14,23 +26,22 @@ local api = {}
 ---@param on_tool_call_complete fun() Callback function invoked when tool call streaming completes successfully
 ---@param on_error fun(exit_code:number) Callback function invoked when an error occurs, receives exit code
 function api.stream(
-    messages,
-    on_content_chunk,
-    on_reasoning_chunk,
-    on_tool_call_chunk,
-    on_content_complete,
-    on_tool_call_complete,
-    on_error
+  messages,
+  on_content_chunk,
+  on_reasoning_chunk,
+  on_tool_call_chunk,
+  on_content_complete,
+  on_tool_call_complete,
+  on_error
 )
-  local payload = vim.fn.json_encode({
+  local basic_payload = {
     model = conf.model,
-    temperature = conf.temperature,
     max_completion_tokens = conf.max_completion_tokens,
-    top_p = conf.top_p,
     stream = true,
     messages = messages,
     tools = tool_schemas,
-  })
+  }
+  local payload = vim.fn.json_encode(merge_tables(basic_payload, conf.addition_kwargs))
 
   local api_key_header = conf.api_key_header or "Authorization"
   local api_key_format = conf.api_key_format or "Bearer %s"

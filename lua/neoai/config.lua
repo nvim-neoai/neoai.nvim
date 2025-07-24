@@ -5,9 +5,8 @@
 ---@field url string
 ---@field api_key string
 ---@field model string
----@field temperature number|nil
 ---@field max_completion_tokens number|nil
----@field top_p number|nil
+---@field additional_kwargs? table<string, any>
 
 ---@class KeymapConfig
 ---@field input table<string, string>
@@ -61,7 +60,7 @@ config.defaults = {
     url = "your-api-url-here",
     api_key = os.getenv("AI_API_KEY") or "<your api key>", -- Support environment variables
     api_key_header = "Authorization", -- Default header
-    api_key_format = "Bearer %s",    -- Default format
+    api_key_format = "Bearer %s", -- Default format
     model = "your-ai-model-here",
     max_completion_tokens = 4096,
   },
@@ -78,7 +77,7 @@ config.defaults = {
     history_file = vim.fn.stdpath("data") .. "/neoai_chat_history.json",
 
     -- Display settings:
-    auto_scroll = true,   -- Auto-scroll to bottom
+    auto_scroll = true, -- Auto-scroll to bottom
   },
 
   presets = {
@@ -137,8 +136,13 @@ function config.set_defaults(opts)
 
     local preset_config = config.defaults.presets[opts.preset]
     if not preset_config then
-      vim.notify("NeoAI: Unknown preset '" .. opts.preset .. "'. Available presets: " ..
-        table.concat(vim.tbl_keys(config.defaults.presets), ", "), vim.log.levels.ERROR)
+      vim.notify(
+        "NeoAI: Unknown preset '"
+          .. opts.preset
+          .. "'. Available presets: "
+          .. table.concat(vim.tbl_keys(config.defaults.presets), ", "),
+        vim.log.levels.ERROR
+      )
       return
     end
 
