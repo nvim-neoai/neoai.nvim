@@ -1,6 +1,5 @@
 local M = {}
 local utils = require("neoai.ai_tools.utils")
-local kwargs = {}
 
 M.meta = {
   name = "LspCodeAction",
@@ -44,7 +43,7 @@ M.run = function(args)
   params.context = { diagnostics = vim.diagnostic.get(bufnr) }
 
   -- Perform synchronous request for code actions
-  local results = vim.lsp.buf_request_sync(bufnr, 'textDocument/codeAction', params, 1000) or {}
+  local results = vim.lsp.buf_request_sync(bufnr, "textDocument/codeAction", params, 1000) or {}
   local titles = {}
   for _, res in pairs(results) do
     for _, action in ipairs(res) do
@@ -54,10 +53,7 @@ M.run = function(args)
 
   -- If no actions available
   if vim.tbl_isempty(titles) then
-    return utils.make_code_block(
-      "✅ No code actions available for: " .. (args.file_path or bufnr),
-      "txt"
-    )
+    return utils.make_code_block("✅ No code actions available for: " .. (args.file_path or bufnr), "txt")
   end
 
   -- Format list of action titles

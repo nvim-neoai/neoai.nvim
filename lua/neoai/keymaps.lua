@@ -7,6 +7,11 @@ function M.setup()
   vim.keymap.set("n", keymaps.normal.open, ":NeoAIChat<CR>", { desc = "Open NeoAI Chat" })
   vim.keymap.set("n", keymaps.normal.toggle, ":NeoAIChatToggle<CR>", { desc = "Toggle NeoAI Chat" })
   vim.keymap.set("n", keymaps.normal.clear_history, ":NeoAIChatClear<CR>", { desc = "Clear NeoAI Chat" })
+
+  -- Session management mappings
+  vim.keymap.set("n", "<leader>as", ":NeoAISessionList<CR>", { desc = "List NeoAI Sessions" })
+  vim.keymap.set("n", "<leader>an", ":NeoAINewSession<CR>", { desc = "New NeoAI Session" })
+  vim.keymap.set("n", "<leader>aS", ":NeoAIStats<CR>", { desc = "NeoAI Statistics" })
 end
 
 --- Setup buffer-local key mappings when chat is open
@@ -40,9 +45,6 @@ function M.buffer_setup()
     require("neoai.chat").close()
   end, { noremap = true, silent = true, buffer = chat_state.buffers.chat })
 
-  vim.keymap.set("n", keymaps.chat.save_history, function()
-    require("neoai.chat").save_history()
-  end, { noremap = true, silent = true, buffer = chat_state.buffers.chat })
 end
 
 return M

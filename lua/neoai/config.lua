@@ -17,10 +17,8 @@
 
 ---@class ChatConfig
 ---@field window WindowConfig
----@field history_limit number
----@field save_history boolean
----@field history_file unknown
 ---@field auto_scroll boolean
+---@field database_path string
 
 ---@class Config
 ---@field api APIConfig
@@ -42,7 +40,6 @@ config.defaults = {
     },
     chat = {
       close = { "<C-c>", "q" },
-      save_history = "<C-s>",
     },
     normal = {
       open = "<leader>ai",
@@ -59,8 +56,8 @@ config.defaults = {
     embedding_api_key = "<your api key>",
     url = "your-api-url-here",
     api_key = os.getenv("AI_API_KEY") or "<your api key>", -- Support environment variables
-    api_key_header = "Authorization", -- Default header
-    api_key_format = "Bearer %s", -- Default format
+    api_key_header = "Authorization",                      -- Default header
+    api_key_format = "Bearer %s",                          -- Default format
     model = "your-ai-model-here",
     max_completion_tokens = 4096,
   },
@@ -71,10 +68,12 @@ config.defaults = {
       width = 80, -- Chat window width
     },
 
-    -- History settings
-    history_limit = 100, -- unused
-    save_history = true,
-    history_file = vim.fn.stdpath("data") .. "/neoai_chat_history.json",
+    -- Storage settings:
+    -- Use a .db extension for SQLite (requires lsqlite3), or .json for file-based storage.
+    -- If you set a .db path but lsqlite3 is not available, NeoAI will automatically fall back to a .json file with the same base name.
+    -- Example: database_path = vim.fn.stdpath("data") .. "/neoai.db"
+    --          database_path = vim.fn.stdpath("data") .. "/neoai.json"
+    database_path = vim.fn.stdpath("data") .. "/neoai.json",
 
     -- Display settings:
     auto_scroll = true, -- Auto-scroll to bottom
@@ -138,9 +137,9 @@ function config.set_defaults(opts)
     if not preset_config then
       vim.notify(
         "NeoAI: Unknown preset '"
-          .. opts.preset
-          .. "'. Available presets: "
-          .. table.concat(vim.tbl_keys(config.defaults.presets), ", "),
+        .. opts.preset
+        .. "'. Available presets: "
+        .. table.concat(vim.tbl_keys(config.defaults.presets), ", "),
         vim.log.levels.ERROR
       )
       return

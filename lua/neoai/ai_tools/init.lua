@@ -11,6 +11,7 @@ local tool_names = {
   "multi_edit",
   "lsp_diagnostic",
   "grep",
+  "todo_planner",
   -- "web_search",
 }
 

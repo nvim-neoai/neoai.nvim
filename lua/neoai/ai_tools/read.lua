@@ -50,7 +50,7 @@ M.run = function(args)
   for line in file:lines() do
     if current_line >= start_line and current_line <= end_line then
       local width = #tostring(end_line) -- max digits of the highest line number
-      table.insert(lines, string.format("%" .. width .. "d| %s", current_line, line))
+      table.insert(lines, string.format("%" .. width .. "d|%s", current_line, line))
     end
     if current_line > end_line then
       break
