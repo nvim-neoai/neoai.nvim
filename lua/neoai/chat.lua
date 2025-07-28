@@ -68,7 +68,10 @@ local function update_chat_display()
   table.insert(lines, " *ID: " .. sess.id .. " | Messages: " .. #messages .. "* ")
   table.insert(lines, " *Created: " .. sess.created_at .. "* ")
   if #chat.chat_state.sessions > 1 then
-    table.insert(lines, " *Total Sessions: " .. #chat.chat_state.sessions .. " | Use :NeoAISessionList or `<leader>as` to switch* ")
+    table.insert(
+      lines,
+      " *Total Sessions: " .. #chat.chat_state.sessions .. " | Use :NeoAISessionList or `<leader>as` to switch* "
+    )
   end
   table.insert(lines, "")
 
@@ -110,14 +113,8 @@ function chat.add_message(type, content, metadata, tool_call_id, tool_calls)
   metadata = metadata or {}
   metadata.timestamp = metadata.timestamp or os.date("%Y-%m-%d %H:%M:%S")
 
-  local msg_id = storage.add_message(
-    chat.chat_state.current_session.id,
-    type,
-    content,
-    metadata,
-    tool_call_id,
-    tool_calls
-  )
+  local msg_id =
+    storage.add_message(chat.chat_state.current_session.id, type, content, metadata, tool_call_id, tool_calls)
   if not msg_id then
     vim.notify("Failed to save message to storage", vim.log.levels.ERROR)
   end
@@ -172,7 +169,9 @@ function chat.send_message()
 
   local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.input, 0, -1, false)
   local message = table.concat(lines, "\n"):gsub("^%s*(.-)%s*$", "%1")
-  if message == "" then return end
+  if message == "" then
+    return
+  end
 
   chat.add_message(MESSAGE_TYPES.USER, message)
   vim.api.nvim_buf_set_lines(chat.chat_state.buffers.input, 0, -1, false, { "" })
@@ -184,7 +183,7 @@ function chat.send_to_ai()
   local data = { tools = chat.format_tools() }
   local system_prompt = prompt.get_system_prompt(data)
   local messages = {
-    { role = "system", content = system_prompt }
+    { role = "system", content = system_prompt },
   }
 
   local session_msgs = storage.get_session_messages(chat.chat_state.current_session.id, 100)
@@ -193,7 +192,9 @@ function chat.send_to_ai()
     local msg = session_msgs[i]
     if msg.type == MESSAGE_TYPES.USER or msg.type == MESSAGE_TYPES.ASSISTANT or msg.type == MESSAGE_TYPES.TOOL then
       table.insert(recent, 1, msg)
-      if #recent >= 100 then break end
+      if #recent >= 100 then
+        break
+      end
     end
   end
 
@@ -202,7 +203,7 @@ function chat.send_to_ai()
       role = msg.type,
       content = msg.content,
       tool_calls = msg.tool_calls,
-      tool_call_id = msg.tool_call_id
+      tool_call_id = msg.tool_call_id,
     })
   end
 
@@ -234,7 +235,9 @@ function chat.get_tool_calls(tool_schemas)
     if schema.type == "function" and schema["function"] and schema["function"].name then
       local fn = schema["function"]
       local ok, args = pcall(vim.fn.json_decode, fn.arguments or "")
-      if not ok then args = {} end
+      if not ok then
+        args = {}
+      end
 
       local tool_found = false
       for _, tool in ipairs(ai_tools.tools) do
@@ -282,79 +285,106 @@ end
 function chat.stream_ai_response(messages)
   local api = require("neoai.api")
   chat.chat_state.streaming_active = true
-  local reason, content = "", ""
-  local calls = {}
+  local reason, content, tool_calls_response = "", "", {}
   local start_time = os.time()
   local last_activity = os.time()
   local timeout_timer = vim.loop.new_timer()
-  timeout_timer:start(1000, 1000, vim.schedule_wrap(function()
-    if os.time() - last_activity > 60 then
-      timeout_timer:stop()
-      timeout_timer:close()
-      chat.chat_state.streaming_active = false
-      chat.add_message(MESSAGE_TYPES.ERROR, "Stream timeout", { timeout = true })
-      update_chat_display()
-    end
-  end))
+  timeout_timer:start(
+    1000,
+    1000,
+    vim.schedule_wrap(function()
+      if os.time() - last_activity > 60 then
+        timeout_timer:stop()
+        timeout_timer:close()
+        chat.chat_state.streaming_active = false
+        chat.add_message(MESSAGE_TYPES.ERROR, "Stream timeout", { timeout = true })
+        update_chat_display()
+      end
+    end)
+  )
 
-  api.stream(messages,
-    function(chunk)
-      last_activity = os.time()
-      if chunk.type == "content" and chunk.data ~= "" then
-        content = content .. chunk.data
-        chat.update_streaming_message(content)
-      elseif chunk.type == "reasoning" and chunk.data ~= "" then
-        reason = reason .. chunk.data
-      elseif chunk.type == "tool_calls" and type(chunk.data) == "table" then
-        for _, tc in ipairs(chunk.data) do
-          if tc.index then
-            table.insert(calls, {
-              index = tc.index,
-              id = tc.id,
-              type = tc.type or "function",
-              ["function"] = {
-                name = tc["function"] and tc["function"].name or "",
-                arguments = tc["function"] and tc["function"].arguments or "",
+  api.stream(messages, function(chunk)
+    last_activity = os.time()
+    if chunk.type == "content" and chunk.data ~= "" then
+      content = content .. chunk.data
+      chat.update_streaming_message(content)
+    elseif chunk.type == "reasoning" and chunk.data ~= "" then
+      reason = reason .. chunk.data
+    elseif chunk.type == "tool_calls" then
+      if chunk.data and type(chunk.data) == "table" then
+        for _, tool_call in ipairs(chunk.data) do
+          if tool_call and tool_call.index then
+            local found = false
+            for _, existing_call in ipairs(tool_calls_response) do
+              if existing_call.index == tool_call.index then
+                -- Merge tool call arguments
+                if tool_call["function"] and tool_call["function"].arguments then
+                  existing_call["function"] = existing_call["function"] or {}
+                  existing_call["function"].arguments = (existing_call["function"].arguments or "")
+                    .. tool_call["function"].arguments
+                end
+                found = true
+                break
+              end
+            end
+            -- If not already tracked, add the new tool_call
+            if not found then
+              -- Ensure we have a complete tool call structure
+              local complete_tool_call = {
+                index = tool_call.index,
+                id = tool_call.id,
+                type = tool_call.type or "function",
+                ["function"] = {
+                  name = tool_call["function"] and tool_call["function"].name or "",
+                  arguments = tool_call["function"] and tool_call["function"].arguments or "",
+                },
               }
-            })
+              table.insert(tool_calls_response, complete_tool_call)
+            end
           end
         end
       end
-    end,
-    function()
-      timeout_timer:stop()
-      timeout_timer:close()
-      local msg = ""
-      if reason ~= "" then msg = "<think>\n" .. reason .. "</think>\n\n" end
-      if content ~= "" then msg = msg .. content end
-      if msg ~= "" then
-        chat.add_message(MESSAGE_TYPES.ASSISTANT, msg, { response_time = os.time() - start_time })
-      end
-      update_chat_display()
-      if #calls > 0 then
-        chat.get_tool_calls(calls)
-      else
-        chat.chat_state.streaming_active = false
-      end
-    end,
-    function(exit_code)
-      timeout_timer:stop()
-      timeout_timer:close()
-      chat.chat_state.streaming_active = false
-      chat.add_message(MESSAGE_TYPES.ERROR, "AI error: " .. tostring(exit_code), {})
-      update_chat_display()
     end
-  )
+  end, function()
+    timeout_timer:stop()
+    timeout_timer:close()
+    local msg = ""
+    if reason ~= "" then
+      msg = "<think>\n" .. reason .. "</think>\n\n"
+    end
+    if content ~= "" then
+      msg = msg .. content
+    end
+    if msg ~= "" then
+      chat.add_message(MESSAGE_TYPES.ASSISTANT, msg, { response_time = os.time() - start_time })
+    end
+    update_chat_display()
+    if #tool_calls_response > 0 then
+      chat.get_tool_calls(tool_calls_response)
+    else
+      chat.chat_state.streaming_active = false
+    end
+  end, function(exit_code)
+    timeout_timer:stop()
+    timeout_timer:close()
+    chat.chat_state.streaming_active = false
+    chat.add_message(MESSAGE_TYPES.ERROR, "AI error: " .. tostring(exit_code), {})
+    update_chat_display()
+  end)
 end
 
 -- Update streaming display
 function chat.update_streaming_message(content)
-  if not chat.chat_state.is_open then return end
+  if not chat.chat_state.is_open then
+    return
+  end
   local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.chat, 0, -1, false)
   for i = #lines, 1, -1 do
     if lines[i]:match("^%*%*Assistant:%*%*") then
       local new_lines = {}
-      for j = 1, i - 1 do table.insert(new_lines, lines[j]) end
+      for j = 1, i - 1 do
+        table.insert(new_lines, lines[j])
+      end
       table.insert(new_lines, "**Assistant:** *" .. os.date("%Y-%m-%d %H:%M:%S") .. "*")
       table.insert(new_lines, "")
       for _, ln in ipairs(vim.split(content, "\n")) do
@@ -362,7 +392,9 @@ function chat.update_streaming_message(content)
       end
       table.insert(new_lines, "")
       vim.api.nvim_buf_set_lines(chat.chat_state.buffers.chat, 0, -1, false, new_lines)
-      if chat.chat_state.config.auto_scroll then scroll_to_bottom(chat.chat_state.buffers.chat) end
+      if chat.chat_state.config.auto_scroll then
+        scroll_to_bottom(chat.chat_state.buffers.chat)
+      end
       break
     end
   end
@@ -384,7 +416,9 @@ function chat.switch_session(session_id)
   if success then
     chat.chat_state.current_session = storage.get_active_session()
     chat.chat_state.sessions = storage.get_all_sessions()
-    if chat.chat_state.is_open then update_chat_display() end
+    if chat.chat_state.is_open then
+      update_chat_display()
+    end
   end
   return success
 end
@@ -404,10 +438,16 @@ function chat.delete_session(session_id)
   if success then
     if is_current then
       local rem = storage.get_all_sessions()
-      if #rem > 0 then chat.switch_session(rem[1].id) else chat.new_session() end
+      if #rem > 0 then
+        chat.switch_session(rem[1].id)
+      else
+        chat.new_session()
+      end
     end
     chat.chat_state.sessions = storage.get_all_sessions()
-    if chat.chat_state.is_open then update_chat_display() end
+    if chat.chat_state.is_open then
+      update_chat_display()
+    end
   end
   return success
 end
@@ -417,7 +457,9 @@ function chat.rename_session(new_title)
   if success then
     chat.chat_state.current_session.title = new_title
     chat.chat_state.sessions = storage.get_all_sessions()
-    if chat.chat_state.is_open then update_chat_display() end
+    if chat.chat_state.is_open then
+      update_chat_display()
+    end
     vim.notify("Session renamed to: " .. new_title, vim.log.levels.INFO)
   end
   return success
@@ -427,7 +469,9 @@ function chat.clear_session()
   local success = storage.clear_session_messages(chat.chat_state.current_session.id)
   if success then
     chat.add_message(MESSAGE_TYPES.SYSTEM, "NeoAI Chat Session Started", {})
-    if chat.chat_state.is_open then update_chat_display() end
+    if chat.chat_state.is_open then
+      update_chat_display()
+    end
   end
   return success
 end
@@ -437,14 +481,18 @@ function chat.get_stats()
 end
 
 function chat.lookup_messages(term)
-  if term == "" then vim.notify("Provide a search term", vim.log.levels.WARN) return end
+  if term == "" then
+    vim.notify("Provide a search term", vim.log.levels.WARN)
+    return
+  end
   local results = {}
   for _, m in ipairs(storage.get_session_messages(chat.chat_state.current_session.id)) do
-    if m.content:find(term, 1, true) then table.insert(results, m) end
+    if m.content:find(term, 1, true) then
+      table.insert(results, m)
+    end
   end
   vim.cmd("botright new")
-  vim.bo.buftype, vim.bo.bufhidden, vim.bo.swapfile, vim.bo.filetype =
-    "nofile", "wipe", false, "markdown"
+  vim.bo.buftype, vim.bo.bufhidden, vim.bo.swapfile, vim.bo.filetype = "nofile", "wipe", false, "markdown"
   local lines = { "# Lookup messages containing '" .. term .. "'", "" }
   if #results == 0 then
     table.insert(lines, "No messages found.")

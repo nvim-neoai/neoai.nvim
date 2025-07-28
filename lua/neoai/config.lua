@@ -9,8 +9,10 @@
 ---@field additional_kwargs? table<string, any>
 
 ---@class KeymapConfig
+---@field normal table<string, string>
 ---@field input table<string, string>
 ---@field chat table<string, string|string[]>
+---@field session_picker string
 
 ---@class WindowConfig
 ---@field width number
@@ -46,6 +48,7 @@ config.defaults = {
       toggle = "<leader>at",
       clear_history = "<leader>ac",
     },
+    session_picker = "default"
   },
   -- API settings
   api = {
