@@ -96,7 +96,8 @@ require("neoai").setup({
     chat = {
       close        = {"<C-c>", "q"},
     },
-  },
+    -- `telescope`, `default`
+    session_picker = "default"  },
 })
 ```
 
