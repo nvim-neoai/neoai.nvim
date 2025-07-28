@@ -22,7 +22,7 @@ A powerful AI-enhanced chat interface for Neovim, featuring streaming responses,
 
 ```lua
 {
-  "PhoneMinThu/neoai.nvim",
+  "nvim-neoai/neoai.nvim",
   dependencies = {
     "nvim-lua/plenary.nvim",
     "nvim-telescope/telescope.nvim",
@@ -40,7 +40,7 @@ A powerful AI-enhanced chat interface for Neovim, featuring streaming responses,
 
 ```lua
 use {
-  "PhoneMinThu/neoai.nvim",
+  "nvim-neoai/neoai.nvim",
   requires = { "nvim-lua/plenary.nvim", "nvim-telescope/telescope.nvim" },
   config = function()
     require("neoai").setup({
