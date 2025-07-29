@@ -142,19 +142,6 @@ function M.setup()
     vim.api.nvim_buf_set_lines(0, -1, -1, false, { "", "", "Diagnostics:" })
     vim.api.nvim_buf_set_lines(0, -1, -1, false, vim.split(diag_tool, "\n"))
   end, { desc = "Read file and check LSP diagnostics", nargs = "?", complete = "file" })
-  -- Add TODO planner command
-  vim.api.nvim_create_user_command("NeoAITodoPlan", function()
-    vim.ui.input({ prompt = "Describe your high-level coding task: " }, function(input)
-      if not input or input == "" then
-        vim.notify("No request provided.", vim.log.levels.WARN)
-        return
-      end
-      local todo_planner = require("neoai.ai_tools.todo_planner")
-      local result = todo_planner.run({ user_request = input })
-      chat.add_message("assistant", result, { source = "TODOPlanner" })
-      chat.open()
-    end)
-  end, { desc = "Break down a coding task into a TODO checklist with recommendations" })
 end
 
 return M

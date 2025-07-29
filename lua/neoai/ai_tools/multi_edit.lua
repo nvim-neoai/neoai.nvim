@@ -76,17 +76,19 @@ M.run = function(args)
   file:close()
 
   local total_replacements = 0
+
   for _, edit in ipairs(edits) do
-    -- Try exact global replacement
+    -- Escape pattern characters for literal matching
+    local old_string_escaped = utils.escape_pattern(edit.old_string)
     local count = 0
-    content, count = content:gsub(edit.old_string, edit.new_string)
+    content, count = content:gsub(old_string_escaped, edit.new_string)
 
     if count == 0 then
       -- Fallback: scan lines and replace first occurrence
       local lines = split_lines(content)
       for idx, line in ipairs(lines) do
         if line:find(edit.old_string, 1, true) then
-          lines[idx] = line:gsub(edit.old_string, edit.new_string)
+          lines[idx] = line:gsub(old_string_escaped, edit.new_string)
           count = 1
           break
         end
@@ -124,7 +126,14 @@ M.run = function(args)
   -- Open updated file outside AI UI
   utils.open_non_ai_buffer(abs_path)
 
-  return string.format("✅ Applied %d replacements to %s", total_replacements, rel_path)
+  -- Summary of replacements
+  local summary = string.format("✅ Applied %d replacements to %s", total_replacements, rel_path)
+  -- Retrieve diagnostics for the updated file
+  local diag_tool = require("neoai.ai_tools.lsp_diagnostic")
+  local diagnostics = diag_tool.run({ file_path = rel_path, include_code_actions = false })
+
+  -- Return summary and diagnostics
+  return summary .. "\n\n" .. diagnostics
 end
 
 return M

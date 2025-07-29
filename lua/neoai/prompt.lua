@@ -11,7 +11,7 @@ end
 local template
 function M.load_template()
   if not template then
-    local template_path = get_plugin_dir() .. "system_prompt.md"
+    local template_path = get_plugin_dir() .. "prompts/system_prompt.md"
     local f, err = io.open(template_path, "r")
     if not f then
       vim.notify("Failed to open system prompt template: " .. err, vim.log.levels.ERROR)

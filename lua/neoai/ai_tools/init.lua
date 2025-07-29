@@ -5,14 +5,13 @@ M.tool_schemas = {}
 
 -- List of tool modules to load
 local tool_names = {
-  "read",
-  "write",
   "project_structure",
+  "read",
+  "grep",
+  "write",
   "multi_edit",
   "lsp_diagnostic",
-  "grep",
-  "todo_planner",
-  -- "web_search",
+  "lsp_code_action",
 }
 
 -- Load tools dynamically

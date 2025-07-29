@@ -134,7 +134,6 @@ sudo apt install luarocks
 ```
 
 - **Install `lsqlite3` using `luarocks`**:
-
   - 📦 **Local install** (recommended):
 
     ```bash
@@ -168,11 +167,6 @@ sudo apt install luarocks
 - `:NeoAIDeleteSession <id>` - Delete session by ID
 - `:NeoAIRenameSession <title>` - Rename current session
 - `:NeoAIStats` - Show database statistics and session info
-
-### Utility Commands
-
-- `:NeoAICheckError [file]` - Read file contents and show LSP diagnostics
-- `:NeoAITodoPlan` - Break down coding tasks into TODO checklist
 
 ## Keymaps
 

@@ -42,8 +42,8 @@ end
 -- Shows a unified diff like git between two files
 function M.diff_files(path1, path2)
   -- Use git diff if available
-  if vim.fn.executable('git') == 1 then
-    local args = { 'git', 'diff', '--no-index', '--color=always', path1, path2 }
+  if vim.fn.executable("git") == 1 then
+    local args = { "git", "diff", "--no-index", "--color=always", path1, path2 }
     local diff = vim.fn.systemlist(args)
     for _, line in ipairs(diff) do
       print(line)
