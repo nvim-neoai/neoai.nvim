@@ -1,23 +1,9 @@
 local M = {}
 local utils = require("neoai.ai_tools.utils")
 
-local description = string.format(
-  [[
-  Request to write content to a file at the specified path. If the file exists, it will be overwritten with the provided content. If the file doesn't exist, it will be created. This tool will automatically create any directories needed to write the file.
-
-  Usage:
-  - The file_path parameter must be an relative path to the current working directory: %s
-  - This tool will overwrite the existing file if there is one at the provided path.
-  - If this is an existing file, you MUST use the Read tool first to read the file's contents.
-    - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
-    - NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
-  ]],
-  vim.fn.getcwd()
-)
-
 M.meta = {
   name = "Write",
-  description = description,
+  description = utils.read_description("write"),
   parameters = {
     type = "object",
     properties = {

@@ -3,10 +3,7 @@ local utils = require("neoai.ai_tools.utils")
 
 M.meta = {
   name = "LspCodeAction",
-  description = [[
-    Retrieves available LSP code actions for a given file (or current buffer if none provided).
-    If 'action_index' is provided, executes the selected code action.
-  ]],
+  description = utils.read_description("lsp_code_action"),
   parameters = {
     type = "object",
     properties = {

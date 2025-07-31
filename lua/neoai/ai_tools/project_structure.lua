@@ -1,9 +1,10 @@
 local M = {}
+
 local utils = require("neoai.ai_tools.utils")
 
 M.meta = {
   name = "ProjectStructure",
-  description = "Inspect and return the directory tree of a given path. Returns a plaintext listing of files and folders up to a specified depth.",
+  description = utils.read_description("project_structure"),
   parameters = {
     type = "object",
     properties = {

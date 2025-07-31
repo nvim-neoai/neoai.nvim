@@ -1,3 +1,89 @@
+-- MultiEdit Tool Tests
+print("\n=== MultiEdit Tool Tests ===")
+
+local multi_edit = require("neoai.ai_tools.multi_edit")
+local utils = require("neoai.ai_tools.utils")
+
+local function write_temp_file(path, content)
+  local f = io.open(path, "w")
+  assert(f, "Failed to open temp file for writing: " .. path)
+  f:write(content)
+  f:close()
+end
+
+local function read_file(path)
+  local f = io.open(path, "r")
+  if not f then return nil end
+  local c = f:read("*a")
+  f:close()
+  return c
+end
+
+local cwd = vim.fn.getcwd()
+local temp_path = cwd .. "/test_multi_edit.txt"
+
+-- 1. Multiple edits in one call
+write_temp_file(temp_path, "foo bar baz\nfoo bar baz\n")
+local result1 = multi_edit.run{
+  file_path = "test_multi_edit.txt",
+  edits = {
+    { old_string = "foo", new_string = "FOO" },
+    { old_string = "bar", new_string = "BAR" },
+    { old_string = "baz", new_string = "BAZ" },
+  }
+}
+print("Multiple edits result:", result1)
+print("File after multiple edits:", read_file(temp_path))
+
+-- 2. Overlapping edits (should process in order)
+write_temp_file(temp_path, "abcabcabc\n")
+local result2 = multi_edit.run{
+  file_path = "test_multi_edit.txt",
+  edits = {
+    { old_string = "abc", new_string = "x" },
+    { old_string = "x", new_string = "y" },
+  }
+}
+print("Overlapping edits result:", result2)
+print("File after overlapping edits:", read_file(temp_path))
+
+-- 3. No matches (should fallback)
+write_temp_file(temp_path, "hello world\n")
+local result3 = multi_edit.run{
+  file_path = "test_multi_edit.txt",
+  edits = {
+    { old_string = "notfound", new_string = "FOUND" },
+  }
+}
+print("No match result:", result3)
+print("File after no match:", read_file(temp_path))
+
+-- 4. Partial match (should fallback to line scan)
+write_temp_file(temp_path, "partialmatchhere\n")
+local result4 = multi_edit.run{
+  file_path = "test_multi_edit.txt",
+  edits = {
+    { old_string = "match", new_string = "MATCHED" },
+  }
+}
+print("Partial match result:", result4)
+print("File after partial match:", read_file(temp_path))
+
+-- 5. File not found
+local result5 = multi_edit.run{
+  file_path = "does_not_exist.txt",
+  edits = {
+    { old_string = "foo", new_string = "bar" },
+  }
+}
+print("File not found result:", result5)
+
+-- 6. File permission error (simulate by opening read-only if possible)
+-- This is hard to simulate portably in a test, so we skip or print a note.
+
+os.remove(temp_path)
+print("MultiEdit Tool Tests complete.\n")
+
 -- Simple test script for NeoAI multi-session functionality
 -- Run this with: nvim --headless -c "luafile test_neoai.lua" -c "qa!"
 

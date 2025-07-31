@@ -3,11 +3,7 @@ local utils = require("neoai.ai_tools.utils")
 
 M.meta = {
   name = "LspDiagnostic",
-  description = [[
-    Retrieves LSP diagnostics for a given file (or current buffer if none provided) and formats them.
-    Uses vim.lsp.diagnostic for compatibility and vim.diagnostic for gathering.
-    Additionally, it can retrieve available LSP code actions at the current cursor position.
-  ]],
+  description = utils.read_description("lsp_diagnostic"),
 
   parameters = {
     type = "object",

@@ -1,5 +1,21 @@
 local M = {}
 
+---
+-- Reads the description markdown for a given tool name from the descriptions/ directory.
+---@param tool_name string: The base name of the tool (e.g., 'grep', 'read')
+---@return string: The contents of the markdown file, or an empty string if not found.
+function M.read_description(tool_name)
+  local info = debug.getinfo(1, "S").source:sub(2)
+  local base = info:match("(.*/)") or "./"
+  local path = base .. "descriptions/" .. tool_name .. ".md"
+  local file = io.open(path, "r")
+  if not file then return "" end
+  local content = file:read("*a")
+  file:close()
+  return content
+end
+
+
 -- Opens or reloads the file in a window outside the AI chat UI
 function M.open_non_ai_buffer(path)
   for _, win in ipairs(vim.api.nvim_list_wins()) do
