@@ -1,31 +1,3 @@
-local M = {}
-
--- Opens or reloads the file in a window outside the AI chat UI
-function M.open_non_ai_buffer(path)
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    local buf = vim.api.nvim_win_get_buf(win)
-    local name = vim.api.nvim_buf_get_name(buf)
-    if not name:match("^neoai://") then
-      vim.api.nvim_set_current_win(win)
-      vim.cmd("edit " .. path)
-      return
-    end
-  end
-  -- Fallback: open in current window
-  vim.cmd("edit " .. path)
-end
-
--- Escapes a Lua pattern so it can be used as a literal in gsub
-function M.escape_pattern(s)
-  return (s:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1"))
-end
-
--- Wraps text in a markdown code block with optional language identifier
-function M.make_code_block(text, lang)
-  lang = lang or "txt"
-  return string.format("```%s\n%s\n```", lang, text)
-end
-
 local function read_lines(filepath)
   local lines = {}
   local file = io.open(filepath, "r")
@@ -39,9 +11,7 @@ local function read_lines(filepath)
   return lines
 end
 
--- Shows a unified diff like git between two files
-function M.diff_files(path1, path2)
-  -- Use git diff if available
+local function diff_files(path1, path2)
   if vim.fn.executable("git") == 1 then
     local args = { "git", "diff", "--no-index", "--color=always", path1, path2 }
     local diff = vim.fn.systemlist(args)
@@ -51,7 +21,6 @@ function M.diff_files(path1, path2)
     return
   end
 
-  -- Fallback to manual line-by-line diff
   local lines1, err1 = read_lines(path1)
   local lines2, err2 = read_lines(path2)
 
@@ -81,4 +50,4 @@ function M.diff_files(path1, path2)
   end
 end
 
-return M
+return diff_files

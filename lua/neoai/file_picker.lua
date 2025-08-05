@@ -18,7 +18,7 @@ function M.select_file()
         actions.close(prompt_bufnr)
         local bufnr = vim.api.nvim_get_current_buf()
         local cursor = vim.api.nvim_win_get_cursor(0)
-        local row, col = cursor[1], cursor[2]
+        local row, col = cursor[1], cursor[2] + 1
         -- clamp col within line length
         local line = vim.api.nvim_buf_get_lines(bufnr, row - 1, row, true)[1]
         if col > #line then col = #line end

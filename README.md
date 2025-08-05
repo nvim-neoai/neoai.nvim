@@ -10,7 +10,7 @@ A powerful AI-enhanced chat interface for Neovim, featuring streaming responses,
 - **Session Management**: Telescope-powered session picker for easy navigation
 - **Streaming Responses**: Real-time assistant replies with response time display
 - **Tool Calls**: Automatic invocation of file-based tools (read, write, project structure, multi-edit, LSP diagnostics, semantic search, web search)
-- **File Picker**: Quickly insert file paths into prompts using Telescope (`@` trigger)
+- **File Picker**: Quickly insert file paths into prompts using Telescope (`@@` double-at trigger)
 - **Message History**: Persistent conversation history across sessions
 - **Customizable Configuration**: Configure API provider, model, UI layout, keymaps, and more via `require('neoai').setup()`
 - **Multiple Providers & Presets**: Built-in presets for OpenAI, Groq, Anthropic, Ollama (local), or custom endpoints
@@ -89,7 +89,7 @@ require("neoai").setup({
       clear_history = "<leader>ac",
     },
     input = {
-      file_picker  = "@",     -- insert file path
+      file_picker  = "@@",    -- insert file path (double-at trigger)
       send_message = "<CR>",
       close        = "<C-c>",
     },
@@ -183,7 +183,7 @@ sudo apt install luarocks
 
 - `<CR>` - Send Message
 - `<C-c>` - Close Chat
-- `@` - Trigger file picker (inserts `` `@path/to/file` ``)
+- `@@` - Trigger file picker (inserts `` `path/to/file` `` in backticks)
 
 **In Chat History Buffer**:
 
@@ -196,7 +196,27 @@ sudo apt install luarocks
 1. Open chat with `:NeoAIChat` or `<leader>ai`.
 2. Type your message in the input box and press `<CR>` to send.
 3. Watch streaming assistant responses in the chat pane.
-4. Trigger file operations by asking the AI or typing `@` to insert file paths.
+4. Trigger file operations by asking the AI or typing `@@` to insert file paths.
+
+### 📁 File Picker Usage
+
+NeoAI includes a convenient file picker integration powered by Telescope:
+
+- **Trigger**: Type `@@` (double-at) in the chat input buffer
+- **Function**: Opens Telescope file picker to browse and select files
+- **Result**: Selected file path is inserted as `` `path/to/file` `` (in backticks) at cursor position
+- **Use case**: Quickly reference files in your prompts for AI analysis, editing, or discussion
+
+**Example workflow:**
+1. Type: "Please review this file: @@"
+2. Telescope opens, select your file (e.g., `src/main.js`)
+3. Result: "Please review this file: `` `src/main.js` ``"
+4. Send message for AI to analyze the file
+
+**Why `@@` (double-at)?**
+- Allows typing single `@` symbols normally (common in code, emails, etc.)
+- Only triggers file picker when you specifically need it
+- Prevents accidental popup when typing regular text
 
 ### 🔄 Multi-Session Workflow
 

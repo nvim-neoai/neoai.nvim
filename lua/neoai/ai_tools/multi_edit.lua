@@ -4,10 +4,7 @@ local utils = require("neoai.ai_tools.utils")
 
 M.meta = {
   name = "MultiEdit",
-  description = [[
-Makes multiple changes to a single file in one operation.
-Use this tool to edit files by providing the exact text to replace and the new text.
-]],
+  description = utils.read_description("multi_edit"),
   parameters = {
     type = "object",
     properties = {
