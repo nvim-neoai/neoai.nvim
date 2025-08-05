@@ -18,8 +18,8 @@ end
 function M.buffer_setup()
   local chat_state = require("neoai.chat").chat_state
 
-  -- Insert file with @ trigger in insert mode
-  vim.keymap.set("i", "@", function()
+  -- Insert file with @@ trigger in insert mode
+  vim.keymap.set("i", "@@", function()
     require("neoai.file_picker").select_file()
   end, { noremap = true, silent = true, buffer = chat_state.buffers.input })
 
