@@ -3,6 +3,19 @@ local ai_tools = require("neoai.ai_tools")
 local prompt = require("neoai.prompt")
 local storage = require("neoai.storage")
 
+-- Apply rate limit delay before AI API calls
+local function apply_delay(callback)
+  local delay = require("neoai.config").values.api.api_call_delay or 0
+  if delay <= 0 then
+    callback()
+  else
+    vim.notify("NeoAI: Waiting " .. delay .. "ms for rate limit", vim.log.levels.INFO)
+    vim.defer_fn(function()
+      callback()
+    end, delay)
+  end
+end
+
 -- Message types
 local MESSAGE_TYPES = {
   USER = "user",
@@ -114,7 +127,7 @@ function chat.add_message(type, content, metadata, tool_call_id, tool_calls)
   metadata.timestamp = metadata.timestamp or os.date("%Y-%m-%d %H:%M:%S")
 
   local msg_id =
-    storage.add_message(chat.chat_state.current_session.id, type, content, metadata, tool_call_id, tool_calls)
+      storage.add_message(chat.chat_state.current_session.id, type, content, metadata, tool_call_id, tool_calls)
   if not msg_id then
     vim.notify("Failed to save message to storage", vim.log.levels.ERROR)
   end
@@ -175,7 +188,9 @@ function chat.send_message()
 
   chat.add_message(MESSAGE_TYPES.USER, message)
   vim.api.nvim_buf_set_lines(chat.chat_state.buffers.input, 0, -1, false, { "" })
-  chat.send_to_ai()
+  apply_delay(function()
+    chat.send_to_ai()
+  end)
 end
 
 -- Send to AI
@@ -262,9 +277,10 @@ function chat.get_tool_calls(tool_schemas)
   end
 
   if completed > 0 then
-    vim.defer_fn(function()
+    -- Apply rate limit delay after tool execution
+    apply_delay(function()
       chat.send_to_ai()
-    end, 100)
+    end)
   else
     chat.chat_state.streaming_active = false
   end
@@ -289,19 +305,27 @@ function chat.stream_ai_response(messages)
   local start_time = os.time()
   local last_activity = os.time()
   local timeout_timer = vim.loop.new_timer()
-  timeout_timer:start(
-    1000,
-    1000,
-    vim.schedule_wrap(function()
-      if os.time() - last_activity > 60 then
-        timeout_timer:stop()
-        timeout_timer:close()
-        chat.chat_state.streaming_active = false
-        chat.add_message(MESSAGE_TYPES.ERROR, "Stream timeout", { timeout = true })
-        update_chat_display()
-      end
-    end)
-  )
+
+  -- Start timeout timer only after we begin streaming (not during rate limit delay)
+  local function start_timeout_timer()
+    last_activity = os.time() -- Reset activity time when we actually start
+    timeout_timer:start(
+      1000,
+      1000,
+      vim.schedule_wrap(function()
+        if os.time() - last_activity > 60 then
+          timeout_timer:stop()
+          timeout_timer:close()
+          chat.chat_state.streaming_active = false
+          chat.add_message(MESSAGE_TYPES.ERROR, "Stream timeout", { timeout = true })
+          update_chat_display()
+        end
+      end)
+    )
+  end
+
+  -- Start timeout timer when we actually begin streaming
+  start_timeout_timer()
 
   api.stream(messages, function(chunk)
     last_activity = os.time()
@@ -321,7 +345,7 @@ function chat.stream_ai_response(messages)
                 if tool_call["function"] and tool_call["function"].arguments then
                   existing_call["function"] = existing_call["function"] or {}
                   existing_call["function"].arguments = (existing_call["function"].arguments or "")
-                    .. tool_call["function"].arguments
+                      .. tool_call["function"].arguments
                 end
                 found = true
                 break

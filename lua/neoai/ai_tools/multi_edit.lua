@@ -14,12 +14,14 @@ M.meta = {
       },
       edits = {
         type = "array",
-        description = "Array of edit operations, each containing old_string and new_string",
+        description = "Array of edit operations, each containing old_string, new_string, and optional line range",
         items = {
           type = "object",
           properties = {
             old_string = { type = "string", description = "Exact text to replace" },
             new_string = { type = "string", description = "The replacement text" },
+            start_line = { type = "integer", description = "(Optional) Start line number for this edit (1-based)" },
+            end_line = { type = "integer", description = "(Optional) End line number for this edit (1-based)" },
           },
           required = { "old_string", "new_string" },
         },
@@ -37,11 +39,19 @@ local function validate_edit(edit, index)
   if type(edit.new_string) ~= "string" then
     return string.format("Edit %d: 'new_string' must be a string", index)
   end
+  if edit.start_line ~= nil and type(edit.start_line) ~= "number" then
+    return string.format("Edit %d: 'start_line' must be a number", index)
+  end
+  if edit.end_line ~= nil and type(edit.end_line) ~= "number" then
+    return string.format("Edit %d: 'end_line' must be a number", index)
+  end
+  if edit.start_line and edit.end_line and edit.start_line > edit.end_line then
+    return string.format("Edit %d: 'start_line' must be <= 'end_line'", index)
+  end
   return nil
 end
 
 local function split_lines(str)
-  -- Split string into lines preserving empty lines
   return vim.split(str, "\n", { plain = true })
 end
 
@@ -72,46 +82,56 @@ M.run = function(args)
   local content = file:read("*a")
   file:close()
 
+  local lines = split_lines(content)
   local total_replacements = 0
 
   for _, edit in ipairs(edits) do
-    -- Escape pattern characters for literal matching
-    local old_string_escaped = utils.escape_pattern(edit.old_string)
+    local old_pat = utils.escape_pattern(edit.old_string)
     local count = 0
-    content, count = content:gsub(old_string_escaped, edit.new_string)
+    local start_line = edit.start_line or 1
+    local end_line = edit.end_line or #lines
+    start_line = math.max(1, start_line)
+    end_line = math.min(#lines, end_line)
+
+    -- Replace within specified line range
+    for idx = start_line, end_line do
+      local new_line, c = lines[idx]:gsub(old_pat, edit.new_string)
+      if c > 0 then
+        lines[idx] = new_line
+        count = count + c
+      end
+    end
 
     if count == 0 then
-      -- Fallback: scan lines and replace first occurrence
-      local lines = split_lines(content)
+      -- No replacements in range: fallback to first occurrence in entire file
       for idx, line in ipairs(lines) do
         if line:find(edit.old_string, 1, true) then
-          lines[idx] = line:gsub(old_string_escaped, edit.new_string)
+          lines[idx] = line:gsub(old_pat, edit.new_string, 1)
           count = 1
           break
         end
       end
-      if count > 0 then
-        content = table.concat(lines, "\n")
-      else
-        -- Both exact and scan fallback failed: switch to Write tool
-        return string.format("⚠️ Exact match for '%s' failed. Fallback to Write tool.", edit.old_string)
-      end
     end
+
+    if count == 0 then
+      return string.format("⚠️ No match for '%s'. Fallback to Write tool.", edit.old_string)
+    end
+
     total_replacements = total_replacements + count
   end
 
   if total_replacements == 0 then
-    -- No replacements done: fallback to Write tool
     return string.format("⚠️ No replacements made in %s. Fallback to Write tool.", rel_path)
   end
 
   -- Write updated content to temp file
+  local updated = table.concat(lines, "\n")
   local tmp_path = abs_path .. ".tmp"
   local out, werr = io.open(tmp_path, "w")
   if not out then
     return "Cannot write to temp file: " .. tostring(werr)
   end
-  out:write(content)
+  out:write(updated)
   out:close()
 
   -- Rename temp file over original
@@ -129,7 +149,6 @@ M.run = function(args)
   local diag_tool = require("neoai.ai_tools.lsp_diagnostic")
   local diagnostics = diag_tool.run({ file_path = rel_path, include_code_actions = false })
 
-  -- Return summary and diagnostics
   return summary .. "\n\n" .. diagnostics
 end
 
