@@ -54,7 +54,7 @@ use {
 
 ## Configuration
 
-Call `require('neoai').setup(opts)` with any of the following options:
+- Call `require('neoai').setup(opts)` with any of the following options:
 
 ```lua
 require("neoai").setup({
@@ -102,6 +102,60 @@ require("neoai").setup({
     -- `telescope`, `default`
     session_picker = "default"  },
 })
+```
+
+- Multiple models config
+  - api key are setup in `~/.config/nvim/lua/config/env.lua` (default neovim config location)
+
+```lua
+local openai_config = function()
+  local OPENAI_API_KEY = require("config.env").OPENAI_API_KEY
+  require("neoai").setup({
+    preset = "openai",
+    api = {
+      model = "o4-mini",
+      api_key = OPENAI_API_KEY,
+      max_completion_tokens = 4096 * 2,
+      api_call_delay = 5000,
+      additional_kwargs = {
+        reasoning_effort = "medium",
+      },
+    },
+    chat = {
+      database_path = vim.fn.stdpath("data") .. "/neoai.db",
+    },
+  })
+end
+
+local groq_config = function()
+  local GROQ_API_KEY = require("config.env").GROQ_API_KEY
+  require("neoai").setup({
+    preset = "groq",
+    api = {
+      model = "openai/gpt-oss-20b",
+      api_key = GROQ_API_KEY,
+      max_completion_tokens = 8192,
+      api_call_delay = 5000,
+      additional_kwargs = {
+        reasoning_effort = "medium",
+      },
+    },
+    chat = {
+      database_path = vim.fn.stdpath("data") .. "/neoai.db",
+    },
+  })
+end
+
+return {
+  {
+    "nvim-neoai/neoai.nvim",
+    dependencies = {
+      "nvim-lua/plenary.nvim",
+    },
+    config = openai_config,
+  },
+}
+
 ```
 
 ## Persistent Storage Options
@@ -211,12 +265,14 @@ NeoAI includes a convenient file picker integration powered by Telescope:
 - **Use case**: Quickly reference files in your prompts for AI analysis, editing, or discussion
 
 **Example workflow:**
+
 1. Type: "Please review this file: @@"
 2. Telescope opens, select your file (e.g., `src/main.js`)
 3. Result: "Please review this file: `` `src/main.js` ``"
 4. Send message for AI to analyze the file
 
 **Why `@@` (double-at)?**
+
 - Allows typing single `@` symbols normally (common in code, emails, etc.)
 - Only triggers file picker when you specifically need it
 - Prevents accidental popup when typing regular text
