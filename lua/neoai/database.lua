@@ -34,6 +34,8 @@ function M.init_sqlite()
     return false
   end
 
+  db:exec("PRAGMA foreign_keys = ON;")
+
   local create_sessions = [[
     CREATE TABLE IF NOT EXISTS sessions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
