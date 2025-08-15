@@ -23,7 +23,7 @@ function api.stream(messages, on_chunk, on_complete, on_error)
     tools = tool_schemas,
   }
 
-  local payload = vim.fn.json_encode(merge_tables(basic_payload, conf.addition_kwargs))
+  local payload = vim.fn.json_encode(merge_tables(basic_payload, conf.additional_kwargs or {}))
   local api_key_header = conf.api_key_header or "Authorization"
   local api_key_format = conf.api_key_format or "Bearer %s"
   local api_key_value = string.format(api_key_format, conf.api_key)

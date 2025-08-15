@@ -6,6 +6,7 @@
 ---@field api_key string
 ---@field model string
 ---@field max_completion_tokens number|nil
+---@field api_call_delay? number -- Delay in milliseconds between API calls for rate limiting
 ---@field additional_kwargs? table<string, any>
 
 ---@class KeymapConfig
@@ -48,16 +49,17 @@ config.defaults = {
       toggle = "<leader>at",
       clear_history = "<leader>ac",
     },
-    session_picker = "default"
+    session_picker = "default",
   },
   -- API settings
   api = {
     url = "your-api-url-here",
     api_key = os.getenv("AI_API_KEY") or "<your api key>", -- Support environment variables
-    api_key_header = "Authorization",                      -- Default header
-    api_key_format = "Bearer %s",                          -- Default format
+    api_key_header = "Authorization", -- Default header
+    api_key_format = "Bearer %s", -- Default format
     model = "your-ai-model-here",
     max_completion_tokens = 4096,
+    api_call_delay = 0, -- Delay in milliseconds between API calls (0 = no delay)
   },
 
   -- Chat UI settings
@@ -135,9 +137,9 @@ function config.set_defaults(opts)
     if not preset_config then
       vim.notify(
         "NeoAI: Unknown preset '"
-        .. opts.preset
-        .. "'. Available presets: "
-        .. table.concat(vim.tbl_keys(config.defaults.presets), ", "),
+          .. opts.preset
+          .. "'. Available presets: "
+          .. table.concat(vim.tbl_keys(config.defaults.presets), ", "),
         vim.log.levels.ERROR
       )
       return

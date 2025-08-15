@@ -111,6 +111,7 @@ NeoAI.nvim is a multi-session AI chat plugin with a modular architecture:
 - **Environment variables**: Auto-detects `OPENAI_API_KEY`, `GROQ_API_KEY`, etc.
 - **Preset merging**: Deep merge order is defaults → preset → user options
 - **API key validation**: Warns if still set to placeholder values
+- **Rate limiting**: Configure `api_call_delay` (milliseconds) to add delays between API calls for rate limit compliance
 
 ### UI State Management
 - **Buffer management**: Separate buffers for chat history and input
