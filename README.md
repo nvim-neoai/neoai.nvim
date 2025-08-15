@@ -13,6 +13,7 @@ A powerful AI-enhanced chat interface for Neovim, featuring streaming responses,
 - **File Picker**: Quickly insert file paths into prompts using Telescope (`@@` double-at trigger)
 - **Message History**: Persistent conversation history across sessions
 - **Customizable Configuration**: Configure API provider, model, UI layout, keymaps, and more via `require('neoai').setup()`
+- **API Call Delay**: Configurable delay between API calls to handle rate limiting from AI providers
 - **Multiple Providers & Presets**: Built-in presets for OpenAI, Groq, Anthropic, Ollama (local), or custom endpoints
 - **LSP Diagnostics Integration**: Read and display LSP diagnostics alongside file contents
 
@@ -65,6 +66,8 @@ require("neoai").setup({
     url     = "https://api.openai.com/v1/chat/completions",
     api_key = "YOUR_API_KEY",
     model   = "gpt-4",
+    -- Delay between AI API calls (ms) to handle rate limiting
+    api_call_delay = 0, -- default: 0 ms (no delay)
     max_completion_tokens  = 4096,
     api_key_header         = "Authorization",
     api_key_format         = "Bearer %s",
