@@ -128,7 +128,7 @@ NeoAI.nvim is a multi-session AI chat plugin with a modular architecture:
 - **Adding new AI tools**: Create module in `ai_tools/` with `meta` and `run` functions
 - **New storage backend**: Implement storage interface methods
 - **Custom API providers**: Override `api` config with custom URL/headers/format
-- **UI customization**: Modify keymaps, window layout, auto-scroll behavior
+- **UI customization**: Modify keymaps, window layout, auto-scroll behaviour
 
 ### Development Gotchas
 - **Module reloading**: Use `package.loaded['module'] = nil` before re-requiring

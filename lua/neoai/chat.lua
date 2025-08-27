@@ -62,9 +62,9 @@ function chat.setup()
     _ts_suspended = false, -- track if Treesitter is suspended for chat buffer
   }
 
-  -- Initialize storage backend (SQLite or JSON)
+  -- Initialise storage backend (SQLite or JSON)
   local success = storage.init(chat.chat_state.config)
-  assert(success, "NeoAI: Failed to initialize storage")
+  assert(success, "NeoAI: Failed to initialise storage")
 
   -- Load or create session
   chat.chat_state.current_session = storage.get_active_session()
@@ -95,7 +95,7 @@ local function update_chat_display()
 
   local lines = {}
   local sess = chat.chat_state.current_session
-  assert(sess, "NeoAI: Failed to initialize session")
+  assert(sess, "NeoAI: Failed to initialise session")
   local messages = storage.get_session_messages(sess.id)
 
   table.insert(lines, " **NeoAI Chat** ")
@@ -413,7 +413,7 @@ function chat.stream_ai_response(messages)
     end
     update_chat_display()
 
-    -- Resume Treesitter after the message is finalized
+    -- Resume Treesitter after the message is finalised
     if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
       ts_resume(chat.chat_state.buffers.chat)
       chat.chat_state._ts_suspended = false

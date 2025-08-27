@@ -36,7 +36,7 @@ require('neoai').setup({
 })
 ```
 
-## Default Behavior
+## Default Behaviour
 
 - **Default delay**: 0 milliseconds (no delay)
 - **Backward compatibility**: Existing configurations continue to work unchanged

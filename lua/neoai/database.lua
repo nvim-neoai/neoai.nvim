@@ -66,20 +66,20 @@ function M.init_sqlite()
     return false
   end
 
-  vim.notify("NeoAI: SQLite database initialized at " .. db_path, vim.log.levels.INFO)
+  vim.notify("NeoAI: SQLite database initialised at " .. db_path, vim.log.levels.INFO)
   return true
 end
 
 function M.create_session(title, metadata)
   title = title or ("Session " .. os.date("%Y-%m-%d %H:%M:%S"))
   metadata = metadata or {}
-  assert(sqlite and db, "NeoAI: SQLite not initialized")
+  assert(sqlite and db, "NeoAI: SQLite not initialised")
   db:exec("UPDATE sessions SET is_active = 0, updated_at = datetime('now')")
   local stmt = db:prepare("INSERT INTO sessions (title, is_active, metadata) VALUES (?, 1, ?)")
   if stmt then
     stmt:bind_values(title, vim.fn.json_encode(metadata))
     local result = stmt:step()
-    stmt:finalize()
+    stmt:finalise()
     if result == sqlite.DONE then
       return db:last_insert_rowid()
     end
@@ -89,7 +89,7 @@ function M.create_session(title, metadata)
 end
 
 function M.get_active_session()
-  assert(sqlite and db, "NeoAI: SQLite not initialized")
+  assert(sqlite and db, "NeoAI: SQLite not initialised")
   local stmt = db:prepare("SELECT * FROM sessions WHERE is_active = 1 LIMIT 1")
   if stmt then
     if stmt:step() == sqlite.ROW then
@@ -107,22 +107,22 @@ function M.get_active_session()
       else
         session.metadata = {}
       end
-      stmt:finalize()
+      stmt:finalise()
       return session
     end
-    stmt:finalize()
+    stmt:finalise()
   end
   return nil
 end
 
 function M.switch_session(session_id)
-  assert(sqlite and db, "NeoAI: SQLite not initialized")
+  assert(sqlite and db, "NeoAI: SQLite not initialised")
   db:exec("UPDATE sessions SET is_active = 0, updated_at = datetime('now')")
   local stmt = db:prepare("UPDATE sessions SET is_active = 1, updated_at = datetime('now') WHERE id = ?")
   if stmt then
     stmt:bind_values(session_id)
     local result = stmt:step()
-    stmt:finalize()
+    stmt:finalise()
     if result == sqlite.DONE then
       vim.notify("Switched to session " .. session_id, vim.log.levels.INFO)
       return true
@@ -134,7 +134,7 @@ end
 
 function M.get_all_sessions(limit)
   limit = limit or 50
-  assert(sqlite and db, "NeoAI: SQLite not initialized")
+  assert(sqlite and db, "NeoAI: SQLite not initialised")
   local sessions = {}
   local stmt = db:prepare("SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?")
   if stmt then
@@ -156,18 +156,18 @@ function M.get_all_sessions(limit)
       end
       table.insert(sessions, session)
     end
-    stmt:finalize()
+    stmt:finalise()
   end
   return sessions
 end
 
 function M.delete_session(session_id)
-  assert(sqlite and db, "NeoAI: SQLite not initialized")
+  assert(sqlite and db, "NeoAI: SQLite not initialised")
   local stmt = db:prepare("DELETE FROM sessions WHERE id = ?")
   if stmt then
     stmt:bind_values(session_id)
     local result = stmt:step()
-    stmt:finalize()
+    stmt:finalise()
     if result == sqlite.DONE then
       vim.notify("Deleted session " .. session_id, vim.log.levels.INFO)
       return true
@@ -178,12 +178,12 @@ function M.delete_session(session_id)
 end
 
 function M.update_session_title(session_id, new_title)
-  assert(sqlite and db, "NeoAI: SQLite not initialized")
+  assert(sqlite and db, "NeoAI: SQLite not initialised")
   local stmt = db:prepare("UPDATE sessions SET title = ?, updated_at = datetime('now') WHERE id = ?")
   if stmt then
     stmt:bind_values(new_title, session_id)
     local result = stmt:step()
-    stmt:finalize()
+    stmt:finalise()
     return result == sqlite.DONE
   end
   return false
@@ -192,7 +192,7 @@ end
 function M.add_message(session_id, type, content, metadata, tool_call_id, tool_calls)
   metadata = metadata or {}
   metadata.timestamp = metadata.timestamp or os.date("%Y-%m-%d %H:%M:%S")
-  assert(sqlite and db, "NeoAI: SQLite not initialized")
+  assert(sqlite and db, "NeoAI: SQLite not initialised")
   local stmt = db:prepare([[
     INSERT INTO messages (session_id, type, content, metadata, tool_call_id, tool_calls)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -207,13 +207,13 @@ function M.add_message(session_id, type, content, metadata, tool_call_id, tool_c
       tool_calls and vim.fn.json_encode(tool_calls) or nil
     )
     local result = stmt:step()
-    stmt:finalize()
+    stmt:finalise()
     if result == sqlite.DONE then
       local update_stmt = db:prepare("UPDATE sessions SET updated_at = datetime('now') WHERE id = ?")
       if update_stmt then
         update_stmt:bind_values(session_id)
         update_stmt:step()
-        update_stmt:finalize()
+        update_stmt:finalise()
       end
       return db:last_insert_rowid()
     end
@@ -223,7 +223,7 @@ end
 
 function M.get_session_messages(session_id, limit)
   limit = limit or 1000
-  assert(sqlite and db, "NeoAI: SQLite not initialized")
+  assert(sqlite and db, "NeoAI: SQLite not initialised")
   local messages = {}
   local stmt = db:prepare("SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC LIMIT ?")
   if stmt then
@@ -251,18 +251,18 @@ function M.get_session_messages(session_id, limit)
       end
       table.insert(messages, message)
     end
-    stmt:finalize()
+    stmt:finalise()
   end
   return messages
 end
 
 function M.clear_session_messages(session_id)
-  assert(sqlite and db, "NeoAI: SQLite not initialized")
+  assert(sqlite and db, "NeoAI: SQLite not initialised")
   local stmt = db:prepare("DELETE FROM messages WHERE session_id = ?")
   if stmt then
     stmt:bind_values(session_id)
     local result = stmt:step()
-    stmt:finalize()
+    stmt:finalise()
     if result == sqlite.DONE then
       vim.notify("Cleared messages from session", vim.log.levels.INFO)
       return true
@@ -273,22 +273,22 @@ function M.clear_session_messages(session_id)
 end
 
 function M.get_stats()
-  assert(sqlite and db, "NeoAI: SQLite not initialized")
+  assert(sqlite and db, "NeoAI: SQLite not initialised")
   local session_count, message_count, active_sessions = 0, 0, 0
   local stmt = db:prepare("SELECT COUNT(*) FROM sessions")
   if stmt and stmt:step() == sqlite.ROW then
     session_count = stmt:get_value(0)
-    stmt:finalize()
+    stmt:finalise()
   end
   stmt = db:prepare("SELECT COUNT(*) FROM messages")
   if stmt and stmt:step() == sqlite.ROW then
     message_count = stmt:get_value(0)
-    stmt:finalize()
+    stmt:finalise()
   end
   stmt = db:prepare("SELECT COUNT(*) FROM sessions WHERE is_active = 1")
   if stmt and stmt:step() == sqlite.ROW then
     active_sessions = stmt:get_value(0)
-    stmt:finalize()
+    stmt:finalise()
   end
   return {
     sessions = session_count,
@@ -300,7 +300,7 @@ function M.get_stats()
 end
 
 function M.close()
-  assert(sqlite and db, "NeoAI: SQLite not initialized")
+  assert(sqlite and db, "NeoAI: SQLite not initialised")
   db:close()
   db = nil
 end

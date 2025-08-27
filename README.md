@@ -269,7 +269,7 @@ NeoAI includes a convenient file picker integration powered by Telescope:
 1. Type: "Please review this file: @@"
 2. Telescope opens, select your file (e.g., `src/main.js`)
 3. Result: "Please review this file: `` `src/main.js` ``"
-4. Send message for AI to analyze the file
+4. Send message for AI to analyse the file
 
 **Why `@@` (double-at)?**
 

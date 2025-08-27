@@ -2,7 +2,6 @@
 print("\n=== MultiEdit Tool Tests ===")
 
 local multi_edit = require("neoai.ai_tools.multi_edit")
-local utils = require("neoai.ai_tools.utils")
 
 local function write_temp_file(path, content)
   local f = io.open(path, "w")
@@ -13,7 +12,9 @@ end
 
 local function read_file(path)
   local f = io.open(path, "r")
-  if not f then return nil end
+  if not f then
+    return nil
+  end
   local c = f:read("*a")
   f:close()
   return c
@@ -24,58 +25,58 @@ local temp_path = cwd .. "/test_multi_edit.txt"
 
 -- 1. Multiple edits in one call
 write_temp_file(temp_path, "foo bar baz\nfoo bar baz\n")
-local result1 = multi_edit.run{
+local result1 = multi_edit.run({
   file_path = "test_multi_edit.txt",
   edits = {
     { old_string = "foo", new_string = "FOO" },
     { old_string = "bar", new_string = "BAR" },
     { old_string = "baz", new_string = "BAZ" },
-  }
-}
+  },
+})
 print("Multiple edits result:", result1)
 print("File after multiple edits:", read_file(temp_path))
 
 -- 2. Overlapping edits (should process in order)
 write_temp_file(temp_path, "abcabcabc\n")
-local result2 = multi_edit.run{
+local result2 = multi_edit.run({
   file_path = "test_multi_edit.txt",
   edits = {
     { old_string = "abc", new_string = "x" },
     { old_string = "x", new_string = "y" },
-  }
-}
+  },
+})
 print("Overlapping edits result:", result2)
 print("File after overlapping edits:", read_file(temp_path))
 
 -- 3. No matches (should fallback)
 write_temp_file(temp_path, "hello world\n")
-local result3 = multi_edit.run{
+local result3 = multi_edit.run({
   file_path = "test_multi_edit.txt",
   edits = {
     { old_string = "notfound", new_string = "FOUND" },
-  }
-}
+  },
+})
 print("No match result:", result3)
 print("File after no match:", read_file(temp_path))
 
 -- 4. Partial match (should fallback to line scan)
 write_temp_file(temp_path, "partialmatchhere\n")
-local result4 = multi_edit.run{
+local result4 = multi_edit.run({
   file_path = "test_multi_edit.txt",
   edits = {
     { old_string = "match", new_string = "MATCHED" },
-  }
-}
+  },
+})
 print("Partial match result:", result4)
 print("File after partial match:", read_file(temp_path))
 
 -- 5. File not found
-local result5 = multi_edit.run{
+local result5 = multi_edit.run({
   file_path = "does_not_exist.txt",
   edits = {
     { old_string = "foo", new_string = "bar" },
-  }
-}
+  },
+})
 print("File not found result:", result5)
 
 -- 6. File permission error (simulate by opening read-only if possible)
@@ -89,18 +90,18 @@ print("MultiEdit Tool Tests complete.\n")
 
 print("Testing NeoAI Multi-Session Implementation...")
 
--- Test database initialization
+-- Test database initialisation
 local database = require("neoai.database")
 local config = {
   database_path = vim.fn.stdpath("data") .. "/test_neoai.db",
 }
 
-print("1. Testing database initialization...")
+print("1. Testing database initialisation...")
 local success = database.init(config)
 if success then
-  print("✓ Database initialized successfully")
+  print("✓ Database initialised successfully")
 else
-  print("✗ Database initialization failed")
+  print("✗ Database initialisation failed")
   return
 end
 
@@ -182,8 +183,8 @@ local mock_config = {
   chat = {
     database_path = vim.fn.stdpath("data") .. "/test_neoai.db",
     auto_scroll = true,
-    window = { width = 80 }
-  }
+    window = { width = 80 },
+  },
 }
 
 -- Override the config temporarily
@@ -236,7 +237,7 @@ print("- ✓ Session creation, switching, and management")
 print("- ✓ Message persistence across sessions")
 print("- ✓ Session statistics and info")
 print("- ✓ Chat module integration")
-print("- ✓ Database initialization and cleanup")
+print("- ✓ Database initialisation and cleanup")
 
 print("\nTo use the new features:")
 print("1. Start Neovim and run :NeoAIChat")
