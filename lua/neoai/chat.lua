@@ -3,6 +3,27 @@ local ai_tools = require("neoai.ai_tools")
 local prompt = require("neoai.prompt")
 local storage = require("neoai.storage")
 
+-- Treesitter helpers to avoid crashes during streaming updates of partial Markdown/code
+local function ts_suspend(bufnr)
+  local ok, ts = pcall(require, "vim.treesitter")
+  if ok and ts.stop and bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+    pcall(ts.stop, bufnr)
+  end
+end
+
+local function ts_resume(bufnr)
+  local ok, ts = pcall(require, "vim.treesitter")
+  if ok and bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+    if ts.start then
+      -- Reattach markdown parser
+      pcall(ts.start, bufnr, "markdown")
+    else
+      -- Fallback: re-set filetype to trigger reattach
+      pcall(vim.api.nvim_buf_set_option, bufnr, "filetype", "markdown")
+    end
+  end
+end
+
 -- Apply rate limit delay before AI API calls
 local function apply_delay(callback)
   local delay = require("neoai.config").values.api.api_call_delay or 0
@@ -38,6 +59,7 @@ function chat.setup()
     sessions = {},
     is_open = false,
     streaming_active = false,
+    _ts_suspended = false, -- track if Treesitter is suspended for chat buffer
   }
 
   -- Initialize storage backend (SQLite or JSON)
@@ -127,7 +149,7 @@ function chat.add_message(type, content, metadata, tool_call_id, tool_calls)
   metadata.timestamp = metadata.timestamp or os.date("%Y-%m-%d %H:%M:%S")
 
   local msg_id =
-      storage.add_message(chat.chat_state.current_session.id, type, content, metadata, tool_call_id, tool_calls)
+    storage.add_message(chat.chat_state.current_session.id, type, content, metadata, tool_call_id, tool_calls)
   if not msg_id then
     vim.notify("Failed to save message to storage", vim.log.levels.ERROR)
   end
@@ -301,6 +323,13 @@ end
 function chat.stream_ai_response(messages)
   local api = require("neoai.api")
   chat.chat_state.streaming_active = true
+
+  -- Suspend Treesitter highlighting while streaming to avoid parser errors with partial code blocks
+  if chat.chat_state.is_open and chat.chat_state.buffers.chat and not chat.chat_state._ts_suspended then
+    ts_suspend(chat.chat_state.buffers.chat)
+    chat.chat_state._ts_suspended = true
+  end
+
   local reason, content, tool_calls_response = "", "", {}
   local start_time = os.time()
   local last_activity = os.time()
@@ -313,7 +342,7 @@ function chat.stream_ai_response(messages)
       1000,
       1000,
       vim.schedule_wrap(function()
-        if os.time() - last_activity > 60 then
+        if os.time() - last_activity > 500 then
           timeout_timer:stop()
           timeout_timer:close()
           chat.chat_state.streaming_active = false
@@ -345,7 +374,7 @@ function chat.stream_ai_response(messages)
                 if tool_call["function"] and tool_call["function"].arguments then
                   existing_call["function"] = existing_call["function"] or {}
                   existing_call["function"].arguments = (existing_call["function"].arguments or "")
-                      .. tool_call["function"].arguments
+                    .. tool_call["function"].arguments
                 end
                 found = true
                 break
@@ -383,6 +412,13 @@ function chat.stream_ai_response(messages)
       chat.add_message(MESSAGE_TYPES.ASSISTANT, msg, { response_time = os.time() - start_time })
     end
     update_chat_display()
+
+    -- Resume Treesitter after the message is finalized
+    if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
+      ts_resume(chat.chat_state.buffers.chat)
+      chat.chat_state._ts_suspended = false
+    end
+
     if #tool_calls_response > 0 then
       chat.get_tool_calls(tool_calls_response)
     else
@@ -394,6 +430,12 @@ function chat.stream_ai_response(messages)
     chat.chat_state.streaming_active = false
     chat.add_message(MESSAGE_TYPES.ERROR, "AI error: " .. tostring(exit_code), {})
     update_chat_display()
+
+    -- Ensure Treesitter is resumed on error as well
+    if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
+      ts_resume(chat.chat_state.buffers.chat)
+      chat.chat_state._ts_suspended = false
+    end
   end)
 end
 
