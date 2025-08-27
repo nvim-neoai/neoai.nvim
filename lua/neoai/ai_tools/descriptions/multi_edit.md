@@ -15,11 +15,13 @@
 - Batch multiple text replacements in one call.
 - Scope replacements to a specific line range using `start_line` and `end_line`.
 - Ensures all edits are applied atomically.
-- Useful for large-scale or repetitive changes.
+- Shows a diff preview of proposed changes and asks for explicit approval before applying.
+- If denied, collects a brief reason and returns it (with the diff) to the AI for follow-up.
+- In headless mode (no UI), auto-approves and applies changes, returning a summary, the diff, and diagnostics.
 
 # LIMITATIONS
 
 - Only works with text files.
-- Edits must be non-overlapping and unique within their specified ranges.
+- Edits should be non-overlapping and unique within their specified ranges (the tool applies edits sequentially and may cascade if overlaps exist).
 - Does not support binary files.
 - Line numbers are 1-based; out-of-range values are clamped to file boundaries.
