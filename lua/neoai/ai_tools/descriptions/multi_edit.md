@@ -15,9 +15,8 @@
 - Batch multiple text replacements in one call.
 - Scope replacements to a specific line range using `start_line` and `end_line`.
 - Ensures all edits are applied atomically.
-- Shows a diff preview of proposed changes and asks for explicit approval before applying.
-- If denied, collects a brief reason and returns it (with the diff) to the AI for follow-up.
-- In headless mode (no UI), auto-approves and applies changes, returning a summary, the diff, and diagnostics.
+- In UI mode, writes changes directly into the target file using Git-style conflict markers (<<<<<<<, =======, >>>>>>>) so you can resolve them inline with your normal workflow. Neovim highlights these markers naturally. The cursor jumps to the first conflict for convenience. No separate diff window, no blocking wait, and no special keymaps.
+- In headless mode (no UI), auto-applies changes like before, returning a summary, the diff, and diagnostics.
 
 # LIMITATIONS
 

@@ -55,6 +55,15 @@ local function split_lines(str)
   return vim.split(str, "\n", { plain = true })
 end
 
+-- Shallow copy of an array-like table (lines)
+local function copy_lines(t)
+  local c = {}
+  for i = 1, #t do
+    c[i] = t[i]
+  end
+  return c
+end
+
 -- Return diff text between two files. Prefers git --no-index when available.
 local function get_diff_text(path1, path2)
   local diff_lines = {}
@@ -105,38 +114,79 @@ local function get_diff_text(path1, path2)
   return table.concat(diff_lines, "\n")
 end
 
--- Show diff text in a scratch buffer for user review; returns {bufnr, winid}
-local function show_diff_buffer(diff_text, title)
-  vim.cmd("botright new")
-  local win = vim.api.nvim_get_current_win()
-  local buf = vim.api.nvim_get_current_buf()
-  vim.bo.buftype = "nofile"
-  vim.bo.bufhidden = "wipe"
-  vim.bo.swapfile = false
-  vim.bo.filetype = "diff"
-  vim.api.nvim_buf_set_name(buf, title or "NeoAI MultiEdit Diff")
-
-  -- Provide simple instructions in the winbar
-  pcall(vim.api.nvim_set_option_value, "winbar", " Review diff: y=apply, n=reject, q=cancel ", { win = win })
-
-  vim.bo.modifiable = true
-  local lines = vim.split(diff_text or "", "\n", { plain = true })
-  if #lines == 0 then
-    lines = { "(No differences)" }
+-- Get unified diff hunks with zero context using git, or nil if unavailable
+local function get_u0_hunks(path1, path2)
+  if vim.fn.executable("git") ~= 1 then
+    return nil
   end
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.bo.modifiable = false
-  return buf, win
+  local args = { "git", "diff", "--no-index", "--color=never", "--no-ext-diff", "-U0", path1, path2 }
+  local out = vim.fn.systemlist(args)
+  if type(out) ~= "table" or #out == 0 then
+    return nil
+  end
+  local hunks = {}
+  for _, line in ipairs(out) do
+    local a_s, a_c, b_s, b_c = line:match("^@@%s+%-(%d+),?(%d*)%s+%+(%d+),?(%d*)%s+@@")
+    if a_s and b_s then
+      a_s = tonumber(a_s)
+      b_s = tonumber(b_s)
+      a_c = tonumber(a_c) or 1
+      b_c = tonumber(b_c) or 1
+      table.insert(hunks, { a_start = a_s, a_count = a_c, b_start = b_s, b_count = b_c })
+    end
+  end
+  return hunks
 end
 
--- Close a window and wipe buffer safely
-local function close_bufwin(buf, win)
-  if win and vim.api.nvim_win_is_valid(win) then
-    pcall(vim.api.nvim_win_close, win, true)
+-- Build content with Git-style conflict markers from old/new lines and hunks
+local function build_conflict_content(old_lines, new_lines, hunks)
+  local result = {}
+
+  if not hunks or #hunks == 0 then
+    -- Fallback: single conflict for whole file
+    table.insert(result, "<<<<<<< HEAD")
+    for _, l in ipairs(old_lines) do table.insert(result, l) end
+    table.insert(result, "=======")
+    for _, l in ipairs(new_lines) do table.insert(result, l) end
+    table.insert(result, ">>>>>>> neoai")
+    return result
   end
-  if buf and vim.api.nvim_buf_is_valid(buf) then
-    pcall(vim.api.nvim_buf_delete, buf, { force = true })
+
+  local prev_a_end = 0
+  local prev_b_end = 0
+
+  for _, h in ipairs(hunks) do
+    local a_s, a_c = h.a_start, h.a_count
+    local b_s, b_c = h.b_start, h.b_count
+
+    -- Unchanged prefix before this hunk
+    for i = prev_a_end + 1, math.max(0, a_s - 1) do
+      if old_lines[i] ~= nil then
+        table.insert(result, old_lines[i])
+      end
+    end
+
+    -- Conflict block
+    table.insert(result, "<<<<<<< HEAD")
+    for i = a_s, a_s + a_c - 1 do
+      if old_lines[i] ~= nil then table.insert(result, old_lines[i]) end
+    end
+    table.insert(result, "=======")
+    for i = b_s, b_s + b_c - 1 do
+      if new_lines[i] ~= nil then table.insert(result, new_lines[i]) end
+    end
+    table.insert(result, ">>>>>>> neoai")
+
+    prev_a_end = a_s + a_c - 1
+    prev_b_end = b_s + b_c - 1
   end
+
+  -- Trailing unchanged lines
+  for i = prev_a_end + 1, #old_lines do
+    table.insert(result, old_lines[i])
+  end
+
+  return result
 end
 
 M.run = function(args)
@@ -166,7 +216,8 @@ M.run = function(args)
   local content = file:read("*a")
   file:close()
 
-  local lines = split_lines(content)
+  local orig_lines = split_lines(content)
+  local lines = copy_lines(orig_lines)
   local total_replacements = 0
 
   for _, edit in ipairs(edits) do
@@ -211,7 +262,7 @@ M.run = function(args)
   -- Compose updated content in memory
   local updated = table.concat(lines, "\n")
 
-  -- Write updated content to temp file (for diff + potential apply)
+  -- Write updated content to temp file (for diff + conflict hunks)
   local tmp_path = abs_path .. ".tmp"
   local out, werr = io.open(tmp_path, "w")
   if not out then
@@ -220,7 +271,7 @@ M.run = function(args)
   out:write(updated)
   out:close()
 
-  -- Generate a diff for user review
+  -- Generate a diff for reporting (headless) and hunks for conflict markers (UI)
   local diff_text = get_diff_text(abs_path, tmp_path)
 
   -- If headless (no UI), auto-approve and apply, returning summary + diff + diagnostics.
@@ -237,90 +288,34 @@ M.run = function(args)
     return table.concat(parts, "\n\n")
   end
 
-  -- Show the diff in a scratch buffer to allow scrolling/inspection
-  local buf, win = show_diff_buffer(diff_text, "NeoAI MultiEdit Diff: " .. rel_path)
+  -- UI mode: insert conflict markers inline into the target file and jump to first conflict
+  local hunks = get_u0_hunks(abs_path, tmp_path)
+  local conflict_lines = build_conflict_content(orig_lines, split_lines(updated), hunks)
 
-  -- Non-blocking review flow: map y/n/q in the diff buffer and wait for a decision
-  local decision ---@type nil|boolean
-  local timed_out = false
+  -- Open the target file in a non-AI window and replace its content
+  utils.open_non_ai_buffer(abs_path)
+  local buf = vim.api.nvim_get_current_buf()
+  vim.bo[buf].modifiable = true
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, conflict_lines)
+  -- Save changes to disk
+  pcall(vim.api.nvim_buf_call, buf, function()
+    vim.cmd("write")
+  end)
 
-  local function approve()
-    decision = true
-  end
-  local function reject()
-    decision = false
-  end
-
-  -- Buffer-local keymaps for approval/rejection
-  local map_opts = { buffer = buf, nowait = true, silent = true, noremap = true }
-  vim.keymap.set("n", "y", approve, map_opts)
-  vim.keymap.set("n", "Y", approve, map_opts)
-  vim.keymap.set("n", "n", reject, map_opts)
-  vim.keymap.set("n", "N", reject, map_opts)
-  vim.keymap.set("n", "q", reject, map_opts)
-  vim.keymap.set("n", "<Esc>", reject, map_opts)
-
-  -- If the buffer is closed/hidden, treat as rejection
-  vim.api.nvim_create_autocmd({ "BufWipeout", "BufUnload", "BufHidden" }, {
-    buffer = buf,
-    once = true,
-    callback = function()
-      if decision == nil then
-        decision = false
-      end
-    end,
-  })
-
-  -- Allow up to 10 minutes to review; keep UI responsive
-  local ok_wait = vim.wait(600000, function()
-    return decision ~= nil
-  end, 100)
-  if not ok_wait and decision == nil then
-    timed_out = true
-    decision = false
-  end
-
-  if decision then
-    -- User approved: apply by renaming temp file over original
-    local ok, rename_err = os.rename(tmp_path, abs_path)
-    close_bufwin(buf, win)
-    if not ok then
-      return "Failed to rename temp file: " .. tostring(rename_err)
+  -- Jump cursor to first conflict marker
+  local first_conflict = 1
+  for i, l in ipairs(conflict_lines) do
+    if vim.startswith(l, "<<<<<<<") then
+      first_conflict = i
+      break
     end
-
-    -- Open updated file outside AI UI and report diagnostics
-    utils.open_non_ai_buffer(abs_path)
-
-    local summary = string.format("✅ Applied %d replacements to %s", total_replacements, rel_path)
-    local diag_tool = require("neoai.ai_tools.lsp_diagnostic")
-    local diagnostics = diag_tool.run({ file_path = rel_path, include_code_actions = false })
-
-    return summary .. "\n\n" .. diagnostics
-  else
-    -- User denied: ask for a reason (blocks only after explicit denial), then do not apply changes
-    close_bufwin(buf, win)
-
-    local response = {}
-
-    if timed_out then
-      -- No explicit decision; do not prompt for a reason
-      table.insert(response, "❌ Changes rejected for " .. rel_path .. " (timed out waiting for approval)")
-    else
-      -- Explicit rejection: prompt for reason
-      local reason = vim.fn.input("Reason for rejecting changes (sent back to the AI): ") or ""
-      table.insert(response, "❌ Changes rejected for " .. rel_path)
-      if reason ~= "" then
-        table.insert(response, "Reason: " .. reason)
-      end
-    end
-
-    -- Clean up temp file (after capturing reason if any)
-    pcall(os.remove, tmp_path)
-
-    table.insert(response, "Proposed diff:")
-    table.insert(response, utils.make_code_block(diff_text, "diff"))
-    return table.concat(response, "\n\n")
   end
+  pcall(vim.api.nvim_win_set_cursor, 0, { first_conflict, 0 })
+
+  -- Cleanup temp file
+  pcall(os.remove, tmp_path)
+
+  return string.format("✍️ Inserted %d replacement(s) into %s with Git-style conflict markers. Resolve conflicts and save when ready.", total_replacements, rel_path)
 end
 
 return M
