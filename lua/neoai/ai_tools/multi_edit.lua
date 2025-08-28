@@ -115,8 +115,16 @@ local function show_diff_buffer(diff_text, title)
   vim.bo.swapfile = false
   vim.bo.filetype = "diff"
   vim.api.nvim_buf_set_name(buf, title or "NeoAI MultiEdit Diff")
+
+  -- Provide simple instructions in the winbar
+  pcall(vim.api.nvim_set_option_value, "winbar", " Review diff: y=apply, n=reject, q=cancel ", { win = win })
+
   vim.bo.modifiable = true
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(diff_text, "\n"))
+  local lines = vim.split(diff_text or "", "\n", { plain = true })
+  if #lines == 0 then
+    lines = { "(No differences)" }
+  end
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo.modifiable = false
   return buf, win
 end
@@ -232,11 +240,47 @@ M.run = function(args)
   -- Show the diff in a scratch buffer to allow scrolling/inspection
   local buf, win = show_diff_buffer(diff_text, "NeoAI MultiEdit Diff: " .. rel_path)
 
-  -- Ask for approval
-  local confirm = vim.fn.input("Approve these changes to " .. rel_path .. "? [y/N]: ")
-  confirm = (confirm or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+  -- Non-blocking review flow: map y/n/q in the diff buffer and wait for a decision
+  local decision ---@type nil|boolean
+  local timed_out = false
 
-  if confirm == "y" or confirm == "yes" then
+  local function approve()
+    decision = true
+  end
+  local function reject()
+    decision = false
+  end
+
+  -- Buffer-local keymaps for approval/rejection
+  local map_opts = { buffer = buf, nowait = true, silent = true, noremap = true }
+  vim.keymap.set("n", "y", approve, map_opts)
+  vim.keymap.set("n", "Y", approve, map_opts)
+  vim.keymap.set("n", "n", reject, map_opts)
+  vim.keymap.set("n", "N", reject, map_opts)
+  vim.keymap.set("n", "q", reject, map_opts)
+  vim.keymap.set("n", "<Esc>", reject, map_opts)
+
+  -- If the buffer is closed/hidden, treat as rejection
+  vim.api.nvim_create_autocmd({ "BufWipeout", "BufUnload", "BufHidden" }, {
+    buffer = buf,
+    once = true,
+    callback = function()
+      if decision == nil then
+        decision = false
+      end
+    end,
+  })
+
+  -- Allow up to 10 minutes to review; keep UI responsive
+  local ok_wait = vim.wait(600000, function()
+    return decision ~= nil
+  end, 100)
+  if not ok_wait and decision == nil then
+    timed_out = true
+    decision = false
+  end
+
+  if decision then
     -- User approved: apply by renaming temp file over original
     local ok, rename_err = os.rename(tmp_path, abs_path)
     close_bufwin(buf, win)
@@ -253,17 +297,26 @@ M.run = function(args)
 
     return summary .. "\n\n" .. diagnostics
   else
-    -- User denied: ask for reason to pass back to AI and do not apply changes
+    -- User denied: ask for a reason (blocks only after explicit denial), then do not apply changes
     close_bufwin(buf, win)
-    local reason = vim.fn.input("Please enter a brief reason for denial (sent back to the AI): ") or ""
-    -- Clean up temp file
-    pcall(os.remove, tmp_path)
 
     local response = {}
-    table.insert(response, "❌ Changes rejected for " .. rel_path)
-    if reason ~= "" then
-      table.insert(response, "Reason: " .. reason)
+
+    if timed_out then
+      -- No explicit decision; do not prompt for a reason
+      table.insert(response, "❌ Changes rejected for " .. rel_path .. " (timed out waiting for approval)")
+    else
+      -- Explicit rejection: prompt for reason
+      local reason = vim.fn.input("Reason for rejecting changes (sent back to the AI): ") or ""
+      table.insert(response, "❌ Changes rejected for " .. rel_path)
+      if reason ~= "" then
+        table.insert(response, "Reason: " .. reason)
+      end
     end
+
+    -- Clean up temp file (after capturing reason if any)
+    pcall(os.remove, tmp_path)
+
     table.insert(response, "Proposed diff:")
     table.insert(response, utils.make_code_block(diff_text, "diff"))
     return table.concat(response, "\n\n")
