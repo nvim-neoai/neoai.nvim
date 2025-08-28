@@ -123,7 +123,7 @@ local function update_chat_display()
     elseif message.type == MESSAGE_TYPES.TOOL then
       local tooln = (message.metadata and message.metadata.tool_name) or nil
       if tooln and tooln ~= "" then
-        prefix = "**Tool Response (" .. tooln .. "):** *" .. ts .. "*"
+        prefix = "**Tool Response (" .. tooln .. ")**: *" .. ts .. "*"
       else
         prefix = "**Tool Response:** *" .. ts .. "*"
       end
@@ -136,7 +136,12 @@ local function update_chat_display()
     table.insert(lines, "---")
     table.insert(lines, prefix)
     table.insert(lines, "")
-    for _, line in ipairs(vim.split(message.content, "\n")) do
+    -- Prefer display text (if provided) to avoid cluttering the chat UI
+    local display_content = message.content or ""
+    if message.metadata and message.metadata.display and message.metadata.display ~= "" then
+      display_content = message.metadata.display
+    end
+    for _, line in ipairs(vim.split(display_content, "\n")) do
       table.insert(lines, line)
     end
     table.insert(lines, "")
@@ -297,11 +302,25 @@ function chat.get_tool_calls(tool_schemas)
         if tool.meta.name == fn.name then
           tool_found = true
           local resp_ok, resp = pcall(tool.run, args)
+          local meta = { tool_name = fn.name }
+          local content = ""
           if not resp_ok then
-            resp = "Error executing tool " .. fn.name .. ": " .. tostring(resp)
-            vim.notify(resp, vim.log.levels.ERROR)
+            content = "Error executing tool " .. fn.name .. ": " .. tostring(resp)
+            vim.notify(content, vim.log.levels.ERROR)
+          else
+            if type(resp) == "table" then
+              content = resp.content or ""
+              if resp.display and resp.display ~= "" then
+                meta.display = resp.display
+              end
+            else
+              content = resp or ""
+            end
           end
-          chat.add_message(MESSAGE_TYPES.TOOL, resp or "No response", { tool_name = fn.name }, schema.id)
+          if content == "" then
+            content = "No response"
+          end
+          chat.add_message(MESSAGE_TYPES.TOOL, content, meta, schema.id)
           break
         end
       end

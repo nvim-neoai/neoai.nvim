@@ -32,7 +32,6 @@ M.meta = {
 }
 
 M.run = function(args)
-  local utils = require("neoai.ai_tools.utils")
   local pwd = vim.fn.getcwd()
   local path = pwd .. "/" .. args.file_path
   local start_line = args.start_line or 1
@@ -40,7 +39,7 @@ M.run = function(args)
 
   local file = io.open(path, "r")
   if not file then
-    return "Cannot open file: " .. path
+    return { content = "Cannot open file: " .. path, display = "Read: " .. args.file_path .. " (failed)" }
   end
 
   local lines = {}
@@ -67,7 +66,9 @@ M.run = function(args)
 
   -- Append LSP diagnostics
   local diag = require("neoai.ai_tools.lsp_diagnostic").run({ file_path = args.file_path })
-  return result .. "\n" .. diag
+  local content = result .. "\n" .. diag
+  local display = string.format("Read: %s (%s:%s-%s)", args.file_path, ext ~= "" and ext or "txt", tostring(start_line), tostring(end_line == math.huge and "EOF" or end_line))
+  return { content = content, display = display }
 end
 
 return M
