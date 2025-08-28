@@ -25,6 +25,10 @@ function M.select_file()
         local insert_text = "`" .. filepath .. "`"
         vim.api.nvim_buf_set_text(bufnr, row - 1, col, row - 1, col, { insert_text })
         vim.api.nvim_win_set_cursor(0, { row, col + #insert_text })
+        -- Keep the input window in Insert mode after selection
+        vim.schedule(function()
+          pcall(vim.cmd, "startinsert")
+        end)
       end)
       return true
     end,
