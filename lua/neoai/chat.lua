@@ -614,6 +614,16 @@ function chat.clear_session()
   return success
 end
 
+--- Open chat (if not open) and clear the current session so the user sees a fresh chat
+function chat.open_and_clear()
+  local was_open = chat.chat_state.is_open
+  local ok = chat.clear_session()
+  if not was_open then
+    chat.open()
+  end
+  return ok
+end
+
 function chat.get_stats()
   return storage.get_stats()
 end

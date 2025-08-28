@@ -6,7 +6,9 @@ function M.setup()
   -- Normal mappings
   vim.keymap.set("n", keymaps.normal.open, ":NeoAIChat<CR>", { desc = "Open NeoAI Chat" })
   vim.keymap.set("n", keymaps.normal.toggle, ":NeoAIChatToggle<CR>", { desc = "Toggle NeoAI Chat" })
-  vim.keymap.set("n", keymaps.normal.clear_history, ":NeoAIChatClear<CR>", { desc = "Clear NeoAI Chat" })
+  vim.keymap.set("n", keymaps.normal.clear_history, function()
+    require("neoai.chat").open_and_clear()
+  end, { desc = "Clear NeoAI Chat" })
 
   -- Session management mappings
   vim.keymap.set("n", "<leader>as", ":NeoAISessionList<CR>", { desc = "List NeoAI Sessions" })
