@@ -25,19 +25,35 @@ function M.select_file()
           local cursor = vim.api.nvim_win_get_cursor(0)
           local row, col = cursor[1], cursor[2]
 
-          -- Clamp col within line length
+          -- Current line and bounds
           local line = vim.api.nvim_buf_get_lines(bufnr, row - 1, row, true)[1] or ""
-          if col > #line then col = #line end
+          local line_len = #line
+          if col > line_len then col = line_len end
+
+          -- Advance insertion point to the end of the contiguous word to the right (if any)
+          local j = col
+          while j < line_len do
+            local ch = line:sub(j + 1, j + 1)
+            if ch and ch:match("[%w_]") then
+              j = j + 1
+            else
+              break
+            end
+          end
+          local insert_col = j + 1
+          if insert_col > line_len then insert_col = line_len end
 
           -- Always insert: space + `filepath` + space
           local insert_text = " `" .. filepath .. "` "
-          vim.api.nvim_buf_set_text(bufnr, row - 1, col, row - 1, col, { insert_text })
+          vim.api.nvim_buf_set_text(bufnr, row - 1, insert_col, row - 1, insert_col, { insert_text })
 
-          -- Place cursor just after the inserted text (after the trailing space)
-          vim.api.nvim_win_set_cursor(0, { row, col + #insert_text })
+          -- Place cursor on the trailing space, then append after it
+          local space_col = insert_col + #insert_text - 1
+          vim.api.nvim_win_set_cursor(0, { row, space_col })
 
-          -- Enter Insert mode at that position
-          pcall(vim.cmd, "startinsert")
+          -- Enter Insert mode after the trailing space (reliable for both mid-line and EOL)
+          local a = vim.api.nvim_replace_termcodes("a", true, false, true)
+          vim.api.nvim_feedkeys(a, "n", false)
         end)
       end)
       return true
