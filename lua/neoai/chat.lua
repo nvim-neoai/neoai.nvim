@@ -121,7 +121,12 @@ local function update_chat_display()
         prefix = prefix:gsub("%*$", " (" .. message.metadata.response_time .. "s)*")
       end
     elseif message.type == MESSAGE_TYPES.TOOL then
-      prefix = "**Tool Response:** *" .. ts .. "*"
+      local tooln = (message.metadata and message.metadata.tool_name) or nil
+      if tooln and tooln ~= "" then
+        prefix = "**Tool Response (" .. tooln .. "):** *" .. ts .. "*"
+      else
+        prefix = "**Tool Response:** *" .. ts .. "*"
+      end
     elseif message.type == MESSAGE_TYPES.SYSTEM then
       prefix = "**System:** *" .. ts .. "*"
     elseif message.type == MESSAGE_TYPES.ERROR then
@@ -266,7 +271,18 @@ function chat.get_tool_calls(tool_schemas)
     return
   end
 
-  chat.add_message(MESSAGE_TYPES.ASSISTANT, "**Tool call**", {}, nil, tool_schemas)
+  -- Show which tool(s) are being called
+  local call_names = {}
+  for _, sc in ipairs(tool_schemas) do
+    if sc and sc["function"] and sc["function"].name and sc["function"].name ~= "" then
+      table.insert(call_names, sc["function"].name)
+    end
+  end
+  local call_title = "**Tool call**"
+  if #call_names > 0 then
+    call_title = "**Tool call:** " .. table.concat(call_names, ", ")
+  end
+  chat.add_message(MESSAGE_TYPES.ASSISTANT, call_title, {}, nil, tool_schemas)
   local completed = 0
   for _, schema in ipairs(tool_schemas) do
     if schema.type == "function" and schema["function"] and schema["function"].name then
@@ -285,7 +301,7 @@ function chat.get_tool_calls(tool_schemas)
             resp = "Error executing tool " .. fn.name .. ": " .. tostring(resp)
             vim.notify(resp, vim.log.levels.ERROR)
           end
-          chat.add_message(MESSAGE_TYPES.TOOL, resp or "No response", {}, schema.id)
+          chat.add_message(MESSAGE_TYPES.TOOL, resp or "No response", { tool_name = fn.name }, schema.id)
           break
         end
       end

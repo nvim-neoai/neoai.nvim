@@ -147,7 +147,6 @@ function config.set_defaults(opts)
 
     -- Apply preset configuration
     merged = vim.tbl_deep_extend("force", merged, preset_config)
-    vim.notify("NeoAI: Applied preset '" .. opts.preset .. "'", vim.log.levels.INFO)
   end
 
   -- Remove preset from opts to avoid it being merged into final config
