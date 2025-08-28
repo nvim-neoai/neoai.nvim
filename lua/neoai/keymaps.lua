@@ -28,23 +28,26 @@ function M.buffer_setup()
     require("neoai.chat").send_message()
   end, { noremap = true, silent = true, buffer = chat_state.buffers.input })
 
+  -- Ctrl-C: close
   vim.keymap.set("n", keymaps.input.close, function()
     require("neoai.chat").close()
   end, { noremap = true, silent = true, buffer = chat_state.buffers.input })
 
+  -- Insert mode Ctrl-C in input buffer
   vim.keymap.set("i", keymaps.chat.close[1], function()
     require("neoai.chat").close()
   end, { noremap = true, silent = true, buffer = chat_state.buffers.input })
 
   -- Chat buffer mappings
+  -- Ctrl-C: cancel if streaming, else close chat
   vim.keymap.set("n", keymaps.chat.close[1], function()
-    require("neoai.chat").close()
+    require("neoai.chat").cancel_or_close()
   end, { noremap = true, silent = true, buffer = chat_state.buffers.chat })
 
+  -- 'q' remains a hard close
   vim.keymap.set("n", keymaps.chat.close[2], function()
     require("neoai.chat").close()
   end, { noremap = true, silent = true, buffer = chat_state.buffers.chat })
-
 end
 
 return M

@@ -372,87 +372,107 @@ function chat.stream_ai_response(messages)
   -- Start timeout timer when we actually begin streaming
   start_timeout_timer()
 
-  api.stream(messages, function(chunk)
-    last_activity = os.time()
-    if chunk.type == "content" and chunk.data ~= "" then
-      content = content .. chunk.data
-      chat.update_streaming_message(content)
-    elseif chunk.type == "reasoning" and chunk.data ~= "" then
-      reason = reason .. chunk.data
-    elseif chunk.type == "tool_calls" then
-      if chunk.data and type(chunk.data) == "table" then
-        for _, tool_call in ipairs(chunk.data) do
-          if tool_call and tool_call.index then
-            local found = false
-            for _, existing_call in ipairs(tool_calls_response) do
-              if existing_call.index == tool_call.index then
-                -- Merge tool call arguments
-                if tool_call["function"] and tool_call["function"].arguments then
-                  existing_call["function"] = existing_call["function"] or {}
-                  existing_call["function"].arguments = (existing_call["function"].arguments or "")
-                    .. tool_call["function"].arguments
+  api.stream(
+    messages,
+    function(chunk)
+      last_activity = os.time()
+      if chunk.type == "content" and chunk.data ~= "" then
+        content = content .. chunk.data
+        chat.update_streaming_message(content)
+      elseif chunk.type == "reasoning" and chunk.data ~= "" then
+        reason = reason .. chunk.data
+      elseif chunk.type == "tool_calls" then
+        if chunk.data and type(chunk.data) == "table" then
+          for _, tool_call in ipairs(chunk.data) do
+            if tool_call and tool_call.index then
+              local found = false
+              for _, existing_call in ipairs(tool_calls_response) do
+                if existing_call.index == tool_call.index then
+                  -- Merge tool call arguments
+                  if tool_call["function"] and tool_call["function"].arguments then
+                    existing_call["function"] = existing_call["function"] or {}
+                    existing_call["function"].arguments = (existing_call["function"].arguments or "")
+                      .. tool_call["function"].arguments
+                  end
+                  found = true
+                  break
                 end
-                found = true
-                break
               end
-            end
-            -- If not already tracked, add the new tool_call
-            if not found then
-              -- Ensure we have a complete tool call structure
-              local complete_tool_call = {
-                index = tool_call.index,
-                id = tool_call.id,
-                type = tool_call.type or "function",
-                ["function"] = {
-                  name = tool_call["function"] and tool_call["function"].name or "",
-                  arguments = tool_call["function"] and tool_call["function"].arguments or "",
-                },
-              }
-              table.insert(tool_calls_response, complete_tool_call)
+              -- If not already tracked, add the new tool_call
+              if not found then
+                -- Ensure we have a complete tool call structure
+                local complete_tool_call = {
+                  index = tool_call.index,
+                  id = tool_call.id,
+                  type = tool_call.type or "function",
+                  ["function"] = {
+                    name = tool_call["function"] and tool_call["function"].name or "",
+                    arguments = tool_call["function"] and tool_call["function"].arguments or "",
+                  },
+                }
+                table.insert(tool_calls_response, complete_tool_call)
+              end
             end
           end
         end
       end
-    end
-  end, function()
-    timeout_timer:stop()
-    timeout_timer:close()
-    local msg = ""
-    if reason ~= "" then
-      msg = "<think>\n" .. reason .. "</think>\n\n"
-    end
-    if content ~= "" then
-      msg = msg .. content
-    end
-    if msg ~= "" then
-      chat.add_message(MESSAGE_TYPES.ASSISTANT, msg, { response_time = os.time() - start_time })
-    end
-    update_chat_display()
+    end,
+    function()
+      timeout_timer:stop()
+      timeout_timer:close()
+      local msg = ""
+      if reason ~= "" then
+        msg = "<think>\n" .. reason .. "</think>\n\n"
+      end
+      if content ~= "" then
+        msg = msg .. content
+      end
+      if msg ~= "" then
+        chat.add_message(MESSAGE_TYPES.ASSISTANT, msg, { response_time = os.time() - start_time })
+      end
+      update_chat_display()
 
-    -- Resume Treesitter after the message is finalised
-    if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
-      ts_resume(chat.chat_state.buffers.chat)
-      chat.chat_state._ts_suspended = false
-    end
+      -- Resume Treesitter after the message is finalised
+      if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
+        ts_resume(chat.chat_state.buffers.chat)
+        chat.chat_state._ts_suspended = false
+      end
 
-    if #tool_calls_response > 0 then
-      chat.get_tool_calls(tool_calls_response)
-    else
+      if #tool_calls_response > 0 then
+        chat.get_tool_calls(tool_calls_response)
+      else
+        chat.chat_state.streaming_active = false
+      end
+    end,
+    function(exit_code)
+      timeout_timer:stop()
+      timeout_timer:close()
       chat.chat_state.streaming_active = false
-    end
-  end, function(exit_code)
-    timeout_timer:stop()
-    timeout_timer:close()
-    chat.chat_state.streaming_active = false
-    chat.add_message(MESSAGE_TYPES.ERROR, "AI error: " .. tostring(exit_code), {})
-    update_chat_display()
+      chat.add_message(MESSAGE_TYPES.ERROR, "AI error: " .. tostring(exit_code), {})
+      update_chat_display()
 
-    -- Ensure Treesitter is resumed on error as well
-    if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
-      ts_resume(chat.chat_state.buffers.chat)
-      chat.chat_state._ts_suspended = false
+      -- Ensure Treesitter is resumed on error as well
+      if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
+        ts_resume(chat.chat_state.buffers.chat)
+        chat.chat_state._ts_suspended = false
+      end
+    end,
+    function()
+      -- on_cancel
+      timeout_timer:stop()
+      timeout_timer:close()
+      chat.chat_state.streaming_active = false
+      -- Do not persist partial content; simply refresh display
+      update_chat_display()
+      vim.notify("NeoAI: Streaming cancelled", vim.log.levels.INFO)
+
+      -- Resume Treesitter on cancel
+      if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
+        ts_resume(chat.chat_state.buffers.chat)
+        chat.chat_state._ts_suspended = false
+      end
     end
-  end)
+  )
 end
 
 -- Update streaming display
@@ -479,6 +499,23 @@ function chat.update_streaming_message(content)
       end
       break
     end
+  end
+end
+
+-- Allow cancelling current stream
+function chat.cancel_stream()
+  if chat.chat_state.streaming_active then
+    local api = require("neoai.api")
+    api.cancel()
+  end
+end
+
+-- Cancel stream if active, otherwise close chat
+function chat.cancel_or_close()
+  if chat.chat_state.streaming_active then
+    chat.cancel_stream()
+  else
+    chat.close()
   end
 end
 

@@ -3,6 +3,10 @@ local conf = require("neoai.config").values.api
 local tool_schemas = require("neoai.ai_tools").tool_schemas
 local api = {}
 
+-- Track current streaming job and cancellation state
+local current_job = nil
+local cancelled = false
+
 local function merge_tables(t1, t2)
   local result = {}
   for k, v in pairs(t1) do
@@ -14,7 +18,15 @@ local function merge_tables(t1, t2)
   return result
 end
 
-function api.stream(messages, on_chunk, on_complete, on_error)
+--- Start streaming completion
+--- @param messages table
+--- @param on_chunk fun(chunk: table)
+--- @param on_complete fun()
+--- @param on_error fun(code: integer)
+--- @param on_cancel fun()|nil
+function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
+  cancelled = false
+
   local basic_payload = {
     model = conf.model,
     max_completion_tokens = conf.max_completion_tokens,
@@ -29,7 +41,7 @@ function api.stream(messages, on_chunk, on_complete, on_error)
   local api_key_value = string.format(api_key_format, conf.api_key)
   local api_key = api_key_header .. ": " .. api_key_value
 
-  Job:new({
+  current_job = Job:new({
     command = "curl",
     args = {
       "--silent",
@@ -76,12 +88,39 @@ function api.stream(messages, on_chunk, on_complete, on_error)
     end,
     on_exit = function(_, exit_code)
       vim.schedule(function()
-        if exit_code ~= 0 then
+        -- Clear current job handle
+        current_job = nil
+        if cancelled then
+          if on_cancel then
+            on_cancel()
+          end
+        elseif exit_code ~= 0 then
           on_error(exit_code)
         end
       end)
     end,
-  }):start()
+  })
+
+  current_job:start()
+end
+
+--- Cancel current streaming request (if any)
+function api.cancel()
+  cancelled = true
+  if current_job then
+    -- Try to gracefully shutdown; if not available or fails, kill the process
+    local ok = false
+    if type(current_job.shutdown) == "function" then
+      ok = pcall(function()
+        current_job:shutdown()
+      end)
+    end
+    if not ok and type(current_job.kill) == "function" then
+      pcall(function()
+        current_job:kill()
+      end)
+    end
+  end
 end
 
 return api
