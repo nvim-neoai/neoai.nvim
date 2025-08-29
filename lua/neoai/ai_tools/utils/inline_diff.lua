@@ -104,6 +104,7 @@ function M.apply(abs_path, old_lines, new_lines, opts)
     original_lines = {},
     blocks = {},
     keys = vim.tbl_deep_extend("force", DEFAULT_KEYS, (opts or {}).keys or {}),
+    event_fired = false,
   }
 
   -- ---
@@ -276,9 +277,23 @@ function M.apply(abs_path, old_lines, new_lines, opts)
       -- If no blocks left, cleanup and notify.
       if #self.blocks == 0 then
         self:cleanup()
-        vim.schedule(function()
-          vim.notify("NeoAI: All hunks resolved. Press :w to save.", vim.log.levels.INFO)
-        end)
+        if not self.event_fired then
+          self.event_fired = true
+          -- Mark review finished (no more hunks). User may still :w to save.
+          vim.g.neoai_inline_diff_active = false
+          vim.schedule(function()
+            pcall(
+              vim.api.nvim_exec_autocmds,
+              "User",
+              {
+                pattern = "NeoAIInlineDiffClosed",
+                modeline = false,
+                data = { action = "resolved", path = abs_path, bufnr = self.bufnr },
+              }
+            )
+            vim.notify("NeoAI: All hunks resolved. Press :w to save.", vim.log.levels.INFO)
+          end)
+        end
       end
       return
     end
@@ -314,9 +329,22 @@ function M.apply(abs_path, old_lines, new_lines, opts)
   function State:cancel_review()
     vim.api.nvim_buf_set_lines(self.bufnr, 0, -1, false, self.original_lines)
     self:cleanup()
-    vim.schedule(function()
-      vim.notify("NeoAI: Inline diff cancelled; original content restored.", vim.log.levels.WARN)
-    end)
+    if not self.event_fired then
+      self.event_fired = true
+      vim.g.neoai_inline_diff_active = false
+      vim.schedule(function()
+        pcall(
+          vim.api.nvim_exec_autocmds,
+          "User",
+          {
+            pattern = "NeoAIInlineDiffClosed",
+            modeline = false,
+            data = { action = "cancelled", path = abs_path, bufnr = self.bufnr },
+          }
+        )
+        vim.notify("NeoAI: Inline diff cancelled; original content restored.", vim.log.levels.WARN)
+      end)
+    end
   end
 
   -- ---
@@ -356,9 +384,22 @@ function M.apply(abs_path, old_lines, new_lines, opts)
     vim.tbl_extend("force", autocmd_opts, {
       callback = function()
         State:cleanup()
-        vim.schedule(function()
-          vim.notify("NeoAI: Changes written to disk.", vim.log.levels.INFO)
-        end)
+        if not State.event_fired then
+          State.event_fired = true
+          vim.g.neoai_inline_diff_active = false
+          vim.schedule(function()
+            pcall(
+              vim.api.nvim_exec_autocmds,
+              "User",
+              {
+                pattern = "NeoAIInlineDiffClosed",
+                modeline = false,
+                data = { action = "written", path = abs_path, bufnr = State.bufnr },
+              }
+            )
+            vim.notify("NeoAI: Changes written to disk.", vim.log.levels.INFO)
+          end)
+        end
       end,
     })
   )
@@ -368,6 +409,21 @@ function M.apply(abs_path, old_lines, new_lines, opts)
     vim.tbl_extend("force", autocmd_opts, {
       callback = function()
         State:cleanup()
+        if not State.event_fired then
+          State.event_fired = true
+          vim.g.neoai_inline_diff_active = false
+          vim.schedule(function()
+            pcall(
+              vim.api.nvim_exec_autocmds,
+              "User",
+              {
+                pattern = "NeoAIInlineDiffClosed",
+                modeline = false,
+                data = { action = "closed", path = abs_path, bufnr = State.bufnr },
+              }
+            )
+          end)
+        end
       end,
     })
   )
@@ -393,6 +449,9 @@ function M.apply(abs_path, old_lines, new_lines, opts)
   end, mapopts)
 
   State:goto_block(State.blocks[1])
+
+  -- Mark interactive review active
+  vim.g.neoai_inline_diff_active = true
 
   local msg = string.format("🔍 Inline diff for %d change(s). Use keys to review.", #State.blocks)
   return true, msg

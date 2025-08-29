@@ -405,7 +405,7 @@ function chat.send_to_ai()
     if chat.chat_state.config.auto_scroll then
       scroll_to_bottom(chat.chat_state.buffers.chat)
     end
-    -- Start a thinking animation on the Assistant header until content begins streaming
+    -- Start a thinking animation on the Assistant header until tokens begin streaming
     start_thinking_animation()
   end
 
@@ -514,7 +514,7 @@ function chat.stream_ai_response(messages)
   local start_time = os.time()
   local last_activity = os.time()
   local timeout_timer = vim.loop.new_timer()
-  local saw_first_content = false
+  local saw_first_token = false
 
   -- Start timeout timer only after we begin streaming (not during rate limit delay)
   local function start_timeout_timer()
@@ -542,15 +542,21 @@ function chat.stream_ai_response(messages)
   api.stream(messages, function(chunk)
     last_activity = os.time()
     if chunk.type == "content" and chunk.data ~= "" then
-      if not saw_first_content then
-        saw_first_content = true
-        -- Stop spinner on first assistant content
+      if not saw_first_token then
+        saw_first_token = true
+        -- Stop spinner on first assistant token (reasoning or content)
         stop_thinking_animation()
       end
       content = content .. chunk.data
-      chat.update_streaming_message(content)
+      chat.update_streaming_message(reason, content)
     elseif chunk.type == "reasoning" and chunk.data ~= "" then
+      if not saw_first_token then
+        saw_first_token = true
+        -- Stop spinner on first assistant token (reasoning or content)
+        stop_thinking_animation()
+      end
       reason = reason .. chunk.data
+      chat.update_streaming_message(reason, content)
     elseif chunk.type == "tool_calls" then
       if chunk.data and type(chunk.data) == "table" then
         for _, tool_call in ipairs(chunk.data) do
@@ -653,10 +659,17 @@ function chat.stream_ai_response(messages)
   end)
 end
 
--- Update streaming display
-function chat.update_streaming_message(content)
+-- Update streaming display (shows reasoning and content as they arrive)
+function chat.update_streaming_message(reason, content)
   if not chat.chat_state.is_open then
     return
+  end
+  local display = ""
+  if reason and reason ~= "" then
+    display = display .. "<think>\n" .. reason .. "\n</think>\n\n"
+  end
+  if content and content ~= "" then
+    display = display .. content
   end
   local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.chat, 0, -1, false)
   for i = #lines, 1, -1 do
@@ -667,7 +680,7 @@ function chat.update_streaming_message(content)
       end
       table.insert(new_lines, "**Assistant:** *" .. os.date("%Y-%m-%d %H:%M:%S") .. "*")
       table.insert(new_lines, "")
-      for _, ln in ipairs(vim.split(content, "\n")) do
+      for _, ln in ipairs(vim.split(display, "\n")) do
         table.insert(new_lines, "  " .. ln)
       end
       table.insert(new_lines, "")
