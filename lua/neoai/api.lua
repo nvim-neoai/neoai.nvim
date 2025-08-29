@@ -52,9 +52,11 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
       "Content-Type: application/json",
       "--header",
       api_key,
-      "--data",
-      payload,
+      "--data-binary",
+      "@-",
     },
+    -- Send JSON payload via stdin to avoid hitting argv length limits
+    writer = payload,
     on_stdout = function(_, line)
       for _, data_line in ipairs(vim.split(line, "\n")) do
         if vim.startswith(data_line, "data: ") then
