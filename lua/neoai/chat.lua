@@ -136,6 +136,45 @@ local function apply_delay(callback)
   end
 end
 
+-- Ctrl-C cancel listener (global) so it works even if mappings are bypassed
+local CTRL_C_NS = vim.api.nvim_create_namespace("NeoAICtrlC")
+local CTRL_C_KEY = vim.api.nvim_replace_termcodes("<C-c>", true, false, true)
+
+local function enable_ctrl_c_cancel()
+  if not chat.chat_state then
+    return
+  end
+  if chat.chat_state._ctrlc_enabled then
+    return
+  end
+  chat.chat_state._ctrlc_enabled = true
+  vim.on_key(function(keys)
+    -- Only act when a stream is active
+    if not (chat.chat_state and chat.chat_state.streaming_active) then
+      return
+    end
+    if keys ~= CTRL_C_KEY then
+      return
+    end
+    -- Restrict cancellation to chat or input buffers
+    local cur = vim.api.nvim_get_current_buf()
+    local bchat = chat.chat_state.buffers and chat.chat_state.buffers.chat or nil
+    local binput = chat.chat_state.buffers and chat.chat_state.buffers.input or nil
+    if cur == bchat or cur == binput then
+      vim.schedule(function()
+        require("neoai.chat").cancel_stream()
+      end)
+    end
+  end, CTRL_C_NS)
+end
+
+local function disable_ctrl_c_cancel()
+  if chat.chat_state and chat.chat_state._ctrlc_enabled then
+    pcall(vim.on_key, nil, CTRL_C_NS)
+    chat.chat_state._ctrlc_enabled = false
+  end
+end
+
 -- Message types
 local MESSAGE_TYPES = {
   USER = "user",
@@ -295,6 +334,7 @@ end
 function chat.close()
   -- Ensure any active thinking animation is stopped when closing the UI
   stop_thinking_animation()
+  disable_ctrl_c_cancel()
   require("neoai.ui").close()
   chat.chat_state.is_open = false
 end
@@ -462,6 +502,7 @@ end
 function chat.stream_ai_response(messages)
   local api = require("neoai.api")
   chat.chat_state.streaming_active = true
+  enable_ctrl_c_cancel()
 
   -- Suspend Treesitter highlighting while streaming to avoid parser errors with partial code blocks
   if chat.chat_state.is_open and chat.chat_state.buffers.chat and not chat.chat_state._ts_suspended then
@@ -562,6 +603,8 @@ function chat.stream_ai_response(messages)
     end
     update_chat_display()
 
+    disable_ctrl_c_cancel()
+
     -- Resume Treesitter after the message is finalised
     if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
       ts_resume(chat.chat_state.buffers.chat)
@@ -582,6 +625,8 @@ function chat.stream_ai_response(messages)
     chat.add_message(MESSAGE_TYPES.ERROR, "AI error: " .. tostring(exit_code), {})
     update_chat_display()
 
+    disable_ctrl_c_cancel()
+
     -- Ensure Treesitter is resumed on error as well
     if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
       ts_resume(chat.chat_state.buffers.chat)
@@ -597,6 +642,8 @@ function chat.stream_ai_response(messages)
     -- Do not persist partial content; simply refresh display
     update_chat_display()
     vim.notify("NeoAI: Streaming cancelled", vim.log.levels.INFO)
+
+    disable_ctrl_c_cancel()
 
     -- Resume Treesitter on cancel
     if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then

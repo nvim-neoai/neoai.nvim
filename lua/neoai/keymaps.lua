@@ -30,19 +30,24 @@ function M.buffer_setup()
     require("neoai.chat").send_message()
   end, { noremap = true, silent = true, buffer = chat_state.buffers.input })
 
-  -- Ctrl-C: close
+  -- Ctrl-C: cancel if streaming, else close (input buffer)
   vim.keymap.set("n", keymaps.input.close, function()
-    require("neoai.chat").close()
+    require("neoai.chat").cancel_or_close()
   end, { noremap = true, silent = true, buffer = chat_state.buffers.input })
 
-  -- Insert mode Ctrl-C in input buffer
+  -- Insert mode Ctrl-C in input buffer: cancel if streaming, else close
   vim.keymap.set("i", keymaps.chat.close[1], function()
-    require("neoai.chat").close()
+    require("neoai.chat").cancel_or_close()
   end, { noremap = true, silent = true, buffer = chat_state.buffers.input })
 
   -- Chat buffer mappings
-  -- Ctrl-C: cancel if streaming, else close chat
+  -- Ctrl-C: cancel if streaming, else close chat (normal mode)
   vim.keymap.set("n", keymaps.chat.close[1], function()
+    require("neoai.chat").cancel_or_close()
+  end, { noremap = true, silent = true, buffer = chat_state.buffers.chat })
+
+  -- Insert mode Ctrl-C in chat buffer: cancel if streaming, else close chat
+  vim.keymap.set("i", keymaps.chat.close[1], function()
     require("neoai.chat").cancel_or_close()
   end, { noremap = true, silent = true, buffer = chat_state.buffers.chat })
 
