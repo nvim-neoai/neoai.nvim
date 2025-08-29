@@ -305,6 +305,6 @@ All sessions are automatically saved to persistent JSON file.
 
 For advanced help, open an issue on GitHub.
 
-## License
+## Licence
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT Licence](LICENCE).
