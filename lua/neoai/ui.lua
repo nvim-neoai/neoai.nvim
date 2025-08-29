@@ -55,7 +55,28 @@ function ui.open()
   local chat_win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(chat_win, chat_state.buffers.chat)
   vim.api.nvim_set_option_value("winbar", " Chat ", { win = chat_win })
-  vim.api.nvim_win_set_height(chat_win, 25)
+
+  -- Apply vertical space ratio between chat (top) and input (bottom)
+  local cfg = chat_state.config.window or {}
+  local ratio = cfg.height_ratio or 0.8 -- default: 80% chat, 20% input
+  if ratio < 0 then ratio = 0 end
+  if ratio > 1 then ratio = 1 end
+  local min_input = cfg.min_input_lines or 3 -- ensure input has at least a few lines
+  if min_input < 1 then min_input = 1 end
+
+  -- Total height of the right-hand column is the sum of both split heights
+  local chat_h = vim.api.nvim_win_get_height(chat_win)
+  local input_h = vim.api.nvim_win_get_height(input_win)
+  local total_h = chat_h + input_h
+
+  -- Target chat height based on ratio, respecting minimum input height
+  local target_chat_h = math.floor(total_h * ratio + 0.5)
+  if total_h - target_chat_h < min_input then
+    target_chat_h = math.max(1, total_h - min_input)
+  end
+  target_chat_h = math.max(1, math.min(target_chat_h, total_h - 1))
+  vim.api.nvim_win_set_height(chat_win, target_chat_h)
+
   chat_state.windows.chat = chat_win
 
   -- Set focus to input

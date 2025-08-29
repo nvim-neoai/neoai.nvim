@@ -17,6 +17,8 @@
 
 ---@class WindowConfig
 ---@field width number
+---@field height_ratio number  -- Fraction of column height for chat window (0..1). 0.8 => 80% chat, 20% input
+---@field min_input_lines number -- Minimum lines reserved for input window
 
 ---@class ChatConfig
 ---@field window WindowConfig
@@ -65,7 +67,9 @@ config.defaults = {
   -- Chat UI settings
   chat = {
     window = {
-      width = 80, -- Chat window width
+      width = 80, -- Chat window column width
+      height_ratio = 0.8, -- 80% of column height for chat window
+      min_input_lines = 3, -- Ensure input has at least a few lines
     },
 
     -- Storage settings:
