@@ -64,129 +64,13 @@ local function copy_lines(t)
   return c
 end
 
--- Return diff text between two files. Prefers git --no-index when available.
-local function get_diff_text(path1, path2)
-  local diff_lines = {}
-  if vim.fn.executable("git") == 1 then
-    local args = { "git", "diff", "--no-index", "--color=never", "--no-ext-diff", path1, path2 }
-    local out = vim.fn.systemlist(args)
-    if type(out) == "table" and #out > 0 then
-      diff_lines = out
-    end
-  end
-
-  if #diff_lines == 0 then
-    -- Fallback: simple line-by-line diff
-    local function read_lines(filepath)
-      local lines = {}
-      local f = io.open(filepath, "r")
-      if not f then
-        return {}
-      end
-      for line in f:lines() do
-        table.insert(lines, line)
-      end
-      f:close()
-      return lines
-    end
-
-    local a = read_lines(path1)
-    local b = read_lines(path2)
-    local maxn = math.max(#a, #b)
-    table.insert(diff_lines, string.format("--- %s", path1))
-    table.insert(diff_lines, string.format("+++ %s", path2))
-    for i = 1, maxn do
-      local l1 = a[i]
-      local l2 = b[i]
-      if l1 == l2 then
-        table.insert(diff_lines, "  " .. (l1 or ""))
-      elseif l1 and not l2 then
-        table.insert(diff_lines, "- " .. l1)
-      elseif not l1 and l2 then
-        table.insert(diff_lines, "+ " .. l2)
-      else
-        table.insert(diff_lines, "- " .. l1)
-        table.insert(diff_lines, "+ " .. l2)
-      end
-    end
-  end
-
-  return table.concat(diff_lines, "\n")
-end
-
--- Get unified diff hunks with zero context using git, or nil if unavailable
-local function get_u0_hunks(path1, path2)
-  if vim.fn.executable("git") ~= 1 then
-    return nil
-  end
-  local args = { "git", "diff", "--no-index", "--color=never", "--no-ext-diff", "-U0", path1, path2 }
-  local out = vim.fn.systemlist(args)
-  if type(out) ~= "table" or #out == 0 then
-    return nil
-  end
-  local hunks = {}
-  for _, line in ipairs(out) do
-    local a_s, a_c, b_s, b_c = line:match("^@@%s+%-(%d+),?(%d*)%s+%+(%d+),?(%d*)%s+@@")
-    if a_s and b_s then
-      a_s = tonumber(a_s)
-      b_s = tonumber(b_s)
-      a_c = tonumber(a_c) or 1
-      b_c = tonumber(b_c) or 1
-      table.insert(hunks, { a_start = a_s, a_count = a_c, b_start = b_s, b_count = b_c })
-    end
-  end
-  return hunks
-end
-
--- Build content with Git-style conflict markers from old/new lines and hunks
-local function build_conflict_content(old_lines, new_lines, hunks)
-  local result = {}
-
-  if not hunks or #hunks == 0 then
-    -- Fallback: single conflict for whole file
-    table.insert(result, "<<<<<<< HEAD")
-    for _, l in ipairs(old_lines) do table.insert(result, l) end
-    table.insert(result, "=======")
-    for _, l in ipairs(new_lines) do table.insert(result, l) end
-    table.insert(result, ">>>>>>> neoai")
-    return result
-  end
-
-  local prev_a_end = 0
-  local prev_b_end = 0
-
-  for _, h in ipairs(hunks) do
-    local a_s, a_c = h.a_start, h.a_count
-    local b_s, b_c = h.b_start, h.b_count
-
-    -- Unchanged prefix before this hunk
-    for i = prev_a_end + 1, math.max(0, a_s - 1) do
-      if old_lines[i] ~= nil then
-        table.insert(result, old_lines[i])
-      end
-    end
-
-    -- Conflict block
-    table.insert(result, "<<<<<<< HEAD")
-    for i = a_s, a_s + a_c - 1 do
-      if old_lines[i] ~= nil then table.insert(result, old_lines[i]) end
-    end
-    table.insert(result, "=======")
-    for i = b_s, b_s + b_c - 1 do
-      if new_lines[i] ~= nil then table.insert(result, new_lines[i]) end
-    end
-    table.insert(result, ">>>>>>> neoai")
-
-    prev_a_end = a_s + a_c - 1
-    prev_b_end = b_s + b_c - 1
-  end
-
-  -- Trailing unchanged lines
-  for i = prev_a_end + 1, #old_lines do
-    table.insert(result, old_lines[i])
-  end
-
-  return result
+-- Create a unified diff text using Neovim's builtin diff
+local function unified_diff(old_lines, new_lines)
+  local old_str = table.concat(old_lines or {}, "\n")
+  local new_str = table.concat(new_lines or {}, "\n")
+  ---@diagnostic disable-next-line: missing-fields
+  local diff = vim.diff(old_str, new_str, { result_type = "unified", algorithm = "histogram" })
+  return diff or "(no changes)"
 end
 
 M.run = function(args)
@@ -249,73 +133,44 @@ M.run = function(args)
     end
 
     if count == 0 then
-      return string.format("⚠️ No match for '%s'. Fallback to Write tool.", edit.old_string)
+      return string.format("No match for '%s'. Consider using the Write tool.", edit.old_string)
     end
 
     total_replacements = total_replacements + count
   end
 
   if total_replacements == 0 then
-    return string.format("⚠️ No replacements made in %s. Fallback to Write tool.", rel_path)
+    return string.format("No replacements made in %s. Consider using the Write tool.", rel_path)
   end
 
   -- Compose updated content in memory
-  local updated = table.concat(lines, "\n")
+  local updated_lines = lines
 
-  -- Write updated content to temp file (for diff + conflict hunks)
-  local tmp_path = abs_path .. ".tmp"
-  local out, werr = io.open(tmp_path, "w")
-  if not out then
-    return "Cannot write to temp file: " .. tostring(werr)
-  end
-  out:write(updated)
-  out:close()
-
-  -- Generate a diff for reporting (headless) and hunks for conflict markers (UI)
-  local diff_text = get_diff_text(abs_path, tmp_path)
-
-  -- If headless (no UI), auto-approve and apply, returning summary + diff + diagnostics.
+  -- If headless (no UI), auto-apply and return summary + diff + diagnostics.
   local uis = vim.api.nvim_list_uis()
   if not uis or #uis == 0 then
-    local ok, rename_err = os.rename(tmp_path, abs_path)
-    if not ok then
-      return "Failed to rename temp file: " .. tostring(rename_err)
+    local f, ferr = io.open(abs_path, "w")
+    if not f then
+      return "Failed to open file for writing: " .. tostring(ferr)
     end
-    local summary = string.format("✅ Applied %d replacements to %s (auto-approved, headless)", total_replacements, rel_path)
+    f:write(table.concat(updated_lines, "\n"))
+    f:close()
+
+    local summary = string.format("Applied %d replacement(s) to %s (auto-approved, headless)", total_replacements, rel_path)
+    local diff_text = unified_diff(orig_lines, updated_lines)
     local diag_tool = require("neoai.ai_tools.lsp_diagnostic")
     local diagnostics = diag_tool.run({ file_path = rel_path, include_code_actions = false })
     local parts = { summary, "Applied diff:", utils.make_code_block(diff_text, "diff"), diagnostics }
     return table.concat(parts, "\n\n")
   end
 
-  -- UI mode: insert conflict markers inline into the target file and jump to first conflict
-  local hunks = get_u0_hunks(abs_path, tmp_path)
-  local conflict_lines = build_conflict_content(orig_lines, split_lines(updated), hunks)
-
-  -- Open the target file in a non-AI window and replace its content
-  utils.open_non_ai_buffer(abs_path)
-  local buf = vim.api.nvim_get_current_buf()
-  vim.bo[buf].modifiable = true
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, conflict_lines)
-  -- Save changes to disk
-  pcall(vim.api.nvim_buf_call, buf, function()
-    vim.cmd("write")
-  end)
-
-  -- Jump cursor to first conflict marker
-  local first_conflict = 1
-  for i, l in ipairs(conflict_lines) do
-    if vim.startswith(l, "<<<<<<<") then
-      first_conflict = i
-      break
-    end
+  -- UI mode: open an interactive inline diff with accept/reject controls
+  local ok, msg = utils.inline_diff.apply(abs_path, orig_lines, updated_lines)
+  if ok then
+    return msg
+  else
+    return msg or "Failed to open inline diff"
   end
-  pcall(vim.api.nvim_win_set_cursor, 0, { first_conflict, 0 })
-
-  -- Cleanup temp file
-  pcall(os.remove, tmp_path)
-
-  return string.format("✍️ Inserted %d replacement(s) into %s with Git-style conflict markers. Resolve conflicts and save when ready.", total_replacements, rel_path)
 end
 
 return M

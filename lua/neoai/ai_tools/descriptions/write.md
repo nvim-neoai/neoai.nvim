@@ -7,13 +7,19 @@
 
 - Provide the `file_path` (relative to the current working directory) and the complete `content` to write.
 - If the file exists, it will be overwritten. If not, it will be created.
-- Always read the file first before overwriting, if it exists.
+- When UI is available and the file already exists, this tool presents an inline diff suggestion first. You can accept/reject hunks interactively:
+  - <ct>: accept theirs (apply suggested change)
+  - <co>: keep ours (revert suggestion)
+  - ]d / [d: next/previous hunk
+  - q: cancel review and restore original content
+- If UI is not available (headless), the file is written directly.
 
 # FEATURES
 
 - Writes or overwrites files atomically.
 - Automatically creates directories as needed.
 - Enforces full content replacement (no partial writes).
+- Shows inline diff suggestions before overwriting existing files (when UI is available).
 
 # LIMITATIONS
 

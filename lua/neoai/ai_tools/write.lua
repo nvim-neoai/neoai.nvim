@@ -24,6 +24,10 @@ M.meta = {
   },
 }
 
+local function split_lines(str)
+  return vim.split(str or "", "\n", { plain = true })
+end
+
 M.run = function(args)
   local file_path = args.file_path
   local content = args.content
@@ -39,7 +43,32 @@ M.run = function(args)
   local dir = vim.fn.fnamemodify(abs_path, ":h")
   vim.fn.mkdir(dir, "p")
 
-  -- Explicit I/O error handling
+  -- Read existing content if any
+  local existing = nil
+  do
+    local f = io.open(abs_path, "r")
+    if f then
+      existing = f:read("*a")
+      f:close()
+    end
+  end
+
+  local new_lines = split_lines(content)
+  local old_lines = split_lines(existing or "")
+
+  -- UI available? If file exists and differs, open inline diff suggestion instead of writing immediately
+  local uis = vim.api.nvim_list_uis()
+  if existing ~= nil and existing ~= table.concat(new_lines, "\n") and uis and #uis > 0 then
+    local ok, msg = utils.inline_diff.apply(abs_path, old_lines, new_lines)
+    if ok then
+      return msg
+    else
+      -- Fall back to direct write on failure to show diff
+      vim.notify("NeoAI: inline diff failed, writing file directly (" .. (msg or "unknown error") .. ")", vim.log.levels.WARN)
+    end
+  end
+
+  -- Write content directly
   local f, ferr = io.open(abs_path, "w")
   if not f then
     return string.format("Failed to open file %s for writing: %s", abs_path, ferr)
@@ -49,8 +78,15 @@ M.run = function(args)
 
   utils.open_non_ai_buffer(abs_path)
 
-  -- After writing, retrieve and append LSP diagnostics
-  local success_msg = string.format("✅ Successfully wrote and opened: %s", file_path)
+  -- Diagnostics
+  local success_msg
+  if existing == nil then
+    success_msg = string.format("Created and opened: %s", file_path)
+  elseif existing == content then
+    success_msg = string.format("No changes for %s; opened existing file", file_path)
+  else
+    success_msg = string.format("Wrote and opened: %s", file_path)
+  end
   local diag = require("neoai.ai_tools.lsp_diagnostic").run({ file_path = file_path })
   return success_msg .. "\n" .. diag
 end

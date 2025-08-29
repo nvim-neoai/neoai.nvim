@@ -15,8 +15,12 @@
 - Batch multiple text replacements in one call.
 - Scope replacements to a specific line range using `start_line` and `end_line`.
 - Ensures all edits are applied atomically.
-- In UI mode, writes changes directly into the target file using Git-style conflict markers (<<<<<<<, =======, >>>>>>>) so you can resolve them inline with your normal workflow. Neovim highlights these markers naturally. The cursor jumps to the first conflict for convenience. No separate diff window, no blocking wait, and no special keymaps.
-- In headless mode (no UI), auto-applies changes like before, returning a summary, the diff, and diagnostics.
+- In UI mode, this tool shows an inline diff suggestion directly in the file, without opening a separate window. You can accept or reject each hunk interactively:
+  - <ct>: accept theirs (apply suggested change)
+  - <co>: keep ours (revert suggestion)
+  - ]d / [d: next/previous hunk
+  - q: cancel review and restore original content
+- In headless mode (no UI), the tool auto-applies changes and returns a summary, a `diff` block, and diagnostics.
 
 # LIMITATIONS
 
