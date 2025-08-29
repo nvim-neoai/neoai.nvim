@@ -73,8 +73,6 @@ config.defaults = {
     },
 
     -- Storage settings:
-    -- Use a .db extension for SQLite (requires lsqlite3), or .json for file-based storage.
-    -- If you set a .db path but lsqlite3 is not available, NeoAI will automatically fall back to a .json file with the same base name.
     -- Example: database_path = vim.fn.stdpath("data") .. "/neoai.db"
     --          database_path = vim.fn.stdpath("data") .. "/neoai.json"
     database_path = vim.fn.stdpath("data") .. "/neoai.json",

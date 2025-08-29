@@ -55,7 +55,10 @@ local function stop_thinking_animation()
     end)
     st.timer = nil
   end
-  if st.extmark_id and chat.chat_state.buffers and chat.chat_state.buffers.chat
+  if
+    st.extmark_id
+    and chat.chat_state.buffers
+    and chat.chat_state.buffers.chat
     and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
   then
     pcall(vim.api.nvim_buf_del_extmark, chat.chat_state.buffers.chat, thinking_ns, st.extmark_id)
@@ -96,8 +99,13 @@ local function start_thinking_animation()
       if not st.active then
         return
       end
-      if not (chat.chat_state and chat.chat_state.buffers and chat.chat_state.buffers.chat
-        and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat))
+      if
+        not (
+          chat.chat_state
+          and chat.chat_state.buffers
+          and chat.chat_state.buffers.chat
+          and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
+        )
       then
         return
       end
@@ -154,7 +162,7 @@ function chat.setup()
     thinking = { active = false, timer = nil, extmark_id = nil, frame = 1 },
   }
 
-  -- Initialise storage backend (SQLite or JSON)
+  -- Initialise storage backend
   local success = storage.init(chat.chat_state.config)
   assert(success, "NeoAI: Failed to initialise storage")
 

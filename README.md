@@ -1,11 +1,11 @@
 # NeoAI.nvim
 
-A powerful AI-enhanced chat interface for Neovim, featuring streaming responses, multi-session support, SQLite storage, file operations, and customizable UI. Inspired by Cline and Kilo VSCode extensions.
+A powerful AI-enhanced chat interface for Neovim, featuring streaming responses, multi-session support, file operations, and customizable UI. Inspired by Cline and Kilo VSCode extensions.
 
 ## Features
 
 - **Multi-Session Support**: Create, switch, rename, and delete multiple chat sessions
-- **Persistent Storage**: Chat history is saved using either SQLite (if lsqlite3 is available) or a JSON file, based on your configuration
+- **Persistent Storage**: Chat history is saved using a JSON file, based on your configuration
 - **Interactive Chat UI**: Split-window chat interface with Markdown rendering
 - **Session Management**: Telescope-powered session picker for easy navigation
 - **Streaming Responses**: Real-time assistant replies with response time display
@@ -79,8 +79,6 @@ require("neoai").setup({
     auto_scroll = true,
 
     -- Storage settings (multi-session features)
-    -- Use a .db extension for SQLite (requires lsqlite3), or .json for file-based storage.
-    -- If you set a .db path but lsqlite3 is not available, NeoAI will automatically fall back to a .json file with the same base name.
     database_path = vim.fn.stdpath("data") .. "/neoai.json",
   },
 
@@ -162,51 +160,16 @@ return {
 
 NeoAI supports two persistent storage backends for chat sessions and message history:
 
-- **SQLite**: If you set `database_path` to a `.db` file (e.g. `neoai.db`), NeoAI will use SQLite for storage (requires the `lsqlite3` Lua module).
 - **JSON file**: If you set `database_path` to a `.json` file (e.g. `neoai.json`), NeoAI will use a plain JSON file for storage (no dependencies required).
-
-**Automatic Fallback:**
-If you set a `.db` path but `lsqlite3` is not available, NeoAI will automatically fall back to a `.json` file with the same base name (e.g. `neoai.db` → `neoai.json`). This ensures you always have persistent storage, even if SQLite is not available.
 
 **Example:**
 
 ```lua
 chat = {
-  -- Use SQLite (requires lsqlite3)
-  database_path = vim.fn.stdpath("data") .. "/neoai.db",
-
-  -- Or use JSON file storage (no dependencies)
+  -- Use JSON file storage (no dependencies)
   -- database_path = vim.fn.stdpath("data") .. "/neoai.json",
 }
 ```
-
-### 🛠 Installing `lsqlite3` for SQLite Support
-
-> To use SQLite storage, you need to install the `lsqlite3` Lua module.
-
-- **Install `luarocks`** (if not already installed):
-
-```bash
-sudo apt install luarocks
-```
-
-- **Install `lsqlite3` using `luarocks`**:
-  - 📦 **Local install** (recommended):
-
-    ```bash
-    luarocks install lsqlite3 --local
-    ```
-
-    Add this to your shell profile (e.g., `~/.zshrc` or `~/.bashrc`):
-
-    ```sh
-    export LUA_CPATH="$HOME/.luarocks/lib/lua/5.1/?.so;;"
-    ```
-
-  - 🧨 **System-wide install** (YOLO):
-    ```bash
-    sudo luarocks install lsqlite3
-    ```
 
 ## Commands
 
@@ -313,7 +276,7 @@ In the session picker:
 #### 💾 Persistent Context
 
 Each session retains its own conversation history and prompt context.  
-All sessions are automatically saved to persistent storage (SQLite or JSON file, depending on your configuration).
+All sessions are automatically saved to persistent JSON file. 
 
 ### Session Management Tips
 

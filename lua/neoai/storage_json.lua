@@ -1,7 +1,6 @@
 local M = {}
 
 -- JSON file-based storage backend for NeoAI chat sessions and messages
--- Used as a fallback when lsqlite3 is not available
 
 local json_path = nil
 local data = {

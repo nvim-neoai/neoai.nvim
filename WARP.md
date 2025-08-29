@@ -65,11 +65,9 @@ NeoAI.nvim is a multi-session AI chat plugin with a modular architecture:
 
 - **Storage Abstraction** (`lua/neoai/storage.lua`)
   - Unified interface for persistent storage
-  - Auto-fallback from SQLite to JSON
   - Session and message management
 
 - **Storage Backends**
-  - **SQLite** (`lua/neoai/database.lua`) - Requires lsqlite3
   - **JSON** (`lua/neoai/storage_json.lua`) - No dependencies
 
 - **AI Tools System** (`lua/neoai/ai_tools/`)
@@ -91,7 +89,6 @@ NeoAI.nvim is a multi-session AI chat plugin with a modular architecture:
 ## Critical Technical Insights
 
 ### Storage System
-- **Auto-fallback mechanism**: If `.db` extension is used but lsqlite3 unavailable, automatically switches to `.json` with same base name
 - **Storage interface**: All backends implement same methods (create_session, add_message, etc.)
 - **Session state**: Current session stored in `chat.chat_state.current_session`
 

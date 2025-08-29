@@ -231,7 +231,6 @@ print("✓ Cleanup completed")
 
 print("\n🎉 All tests passed! NeoAI multi-session implementation is working correctly.")
 print("\nKey features implemented:")
-print("- ✓ SQLite database storage with JSON fallback")
 print("- ✓ Multi-session support")
 print("- ✓ Session creation, switching, and management")
 print("- ✓ Message persistence across sessions")

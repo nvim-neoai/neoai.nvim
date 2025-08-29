@@ -1,22 +1,13 @@
 local storage = nil
 local backend = nil
 
-local function try_sqlite()
-  local ok, db = pcall(require, "neoai.database")
-  if ok then
-    backend = "sqlite"
-    return db
-  end
-  return nil
-end
-
 local function try_json()
   local ok, json = pcall(require, "neoai.storage_json")
   if ok then
     backend = "json"
     return json
   end
-  error("NeoAI: No valid storage backend found (sqlite or json)")
+  error("NeoAI: No valid storage backend found (json)")
 end
 
 local function get_extension(path)
@@ -26,92 +17,72 @@ end
 local M = {}
 
 function M.init(config)
-  local db_path = config.database_path or (vim.fn.stdpath("data") .. "/neoai.db")
+  -- Always use the JSON backend. If a .db path is provided, map it to a .json path with the same base name.
+  local db_path = config.database_path or (vim.fn.stdpath("data") .. "/neoai.json")
   local ext = get_extension(db_path)
-  local ok, backend_mod, init_ok
+  local json_config = config
+
   if ext == "db" then
-    ok, backend_mod = pcall(require, "neoai.database")
-    if ok then
-      local success = pcall(backend_mod.init, config)
-      if success then
-        backend = "sqlite"
-        storage = backend_mod
-        return true
-      end
-    end
-    -- fallback to json with same base name
     local json_path = db_path:gsub("%.db$", ".json")
-    local json_config = vim.tbl_extend("force", config, { database_path = json_path })
-    storage = try_json()
-    return storage.init(json_config)
-  elseif ext == "json" then
-    storage = try_json()
-    return storage.init(config)
-  else
-    ok, backend_mod = pcall(require, "neoai.database")
-    if ok then
-      local success = pcall(backend_mod.init, config)
-      if success then
-        backend = "sqlite"
-        storage = backend_mod
-        return true
-      end
+    json_config = vim.tbl_extend("force", config, { database_path = json_path })
+  elseif ext ~= "json" then
+    -- Use the provided path as JSON. Ensure a sensible default when not provided.
+    if not config.database_path then
+      json_config = vim.tbl_extend("force", config, { database_path = db_path })
     end
-    storage = try_json()
-    return storage.init(config)
   end
+
+  storage = try_json()
+  return storage.init(json_config)
 end
 
 function M.create_session(...)
-    assert(storage, "NeoAI: No valid storage backend found")
+  assert(storage, "NeoAI: No valid storage backend found")
   return storage.create_session(...)
 end
 
 function M.get_active_session(...)
-    assert(storage, "NeoAI: No valid storage backend found")
-
+  assert(storage, "NeoAI: No valid storage backend found")
   return storage.get_active_session(...)
 end
 
 function M.switch_session(...)
-    assert(storage, "NeoAI: No valid storage backend found")
-
+  assert(storage, "NeoAI: No valid storage backend found")
   return storage.switch_session(...)
 end
 
 function M.get_all_sessions(...)
-    assert(storage, "NeoAI: No valid storage backend found")
-
+  assert(storage, "NeoAI: No valid storage backend found")
   return storage.get_all_sessions(...)
 end
 
 function M.delete_session(...)
-    assert(storage, "NeoAI: No valid storage backend found")
+  assert(storage, "NeoAI: No valid storage backend found")
   return storage.delete_session(...)
 end
 
 function M.update_session_title(...)
-    assert(storage, "NeoAI: No valid storage backend found")
+  assert(storage, "NeoAI: No valid storage backend found")
   return storage.update_session_title(...)
 end
 
 function M.add_message(...)
-    assert(storage, "NeoAI: No valid storage backend found")
+  assert(storage, "NeoAI: No valid storage backend found")
   return storage.add_message(...)
 end
 
 function M.get_session_messages(...)
-    assert(storage, "NeoAI: No valid storage backend found")
+  assert(storage, "NeoAI: No valid storage backend found")
   return storage.get_session_messages(...)
 end
 
 function M.clear_session_messages(...)
-    assert(storage, "NeoAI: No valid storage backend found")
+  assert(storage, "NeoAI: No valid storage backend found")
   return storage.clear_session_messages(...)
 end
 
 function M.get_stats(...)
-    assert(storage, "NeoAI: No valid storage backend found")
+  assert(storage, "NeoAI: No valid storage backend found")
   return storage.get_stats(...)
 end
 
