@@ -24,6 +24,97 @@ local function ts_resume(bufnr)
   end
 end
 
+-- Thinking animation (spinner) helpers
+local thinking_ns = vim.api.nvim_create_namespace("NeoAIThinking")
+-- Use simple ASCII spinner for broad compatibility
+local spinner_frames = { "|", "/", "-", "\\" }
+
+local function find_last_assistant_header_row()
+  local bufnr = chat.chat_state and chat.chat_state.buffers and chat.chat_state.buffers.chat or nil
+  if not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then
+    return nil
+  end
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  for i = #lines, 1, -1 do
+    if lines[i]:match("^%*%*Assistant:%*%*") then
+      return i - 1 -- 0-based row index
+    end
+  end
+  return nil
+end
+
+local function stop_thinking_animation()
+  local st = chat.chat_state and chat.chat_state.thinking or nil
+  if not st then
+    return
+  end
+  if st.timer then
+    pcall(function()
+      st.timer:stop()
+      st.timer:close()
+    end)
+    st.timer = nil
+  end
+  if st.extmark_id and chat.chat_state.buffers and chat.chat_state.buffers.chat
+    and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
+  then
+    pcall(vim.api.nvim_buf_del_extmark, chat.chat_state.buffers.chat, thinking_ns, st.extmark_id)
+  end
+  st.extmark_id = nil
+  st.active = false
+end
+
+local function start_thinking_animation()
+  if not (chat.chat_state and chat.chat_state.is_open) then
+    return
+  end
+  local bufnr = chat.chat_state.buffers and chat.chat_state.buffers.chat or nil
+  if not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then
+    return
+  end
+  local row = find_last_assistant_header_row()
+  if not row then
+    return
+  end
+
+  local st = chat.chat_state.thinking
+  -- Reset any previous state
+  stop_thinking_animation()
+
+  st.active = true
+  st.frame = 1
+  local text = " Thinking " .. spinner_frames[st.frame] .. " "
+  st.extmark_id = vim.api.nvim_buf_set_extmark(bufnr, thinking_ns, row, 0, {
+    virt_text = { { text, "Comment" } },
+    virt_text_pos = "eol",
+  })
+  st.timer = vim.loop.new_timer()
+  st.timer:start(
+    0,
+    120,
+    vim.schedule_wrap(function()
+      if not st.active then
+        return
+      end
+      if not (chat.chat_state and chat.chat_state.buffers and chat.chat_state.buffers.chat
+        and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat))
+      then
+        return
+      end
+      local b = chat.chat_state.buffers.chat
+      st.frame = (st.frame % #spinner_frames) + 1
+      local t = " Thinking " .. spinner_frames[st.frame] .. " "
+      if st.extmark_id then
+        pcall(vim.api.nvim_buf_set_extmark, b, thinking_ns, row, 0, {
+          id = st.extmark_id,
+          virt_text = { { t, "Comment" } },
+          virt_text_pos = "eol",
+        })
+      end
+    end)
+  )
+end
+
 -- Apply rate limit delay before AI API calls
 local function apply_delay(callback)
   local delay = require("neoai.config").values.api.api_call_delay or 0
@@ -60,6 +151,7 @@ function chat.setup()
     is_open = false,
     streaming_active = false,
     _ts_suspended = false, -- track if Treesitter is suspended for chat buffer
+    thinking = { active = false, timer = nil, extmark_id = nil, frame = 1 },
   }
 
   -- Initialise storage backend (SQLite or JSON)
@@ -193,6 +285,8 @@ function chat.open()
 end
 
 function chat.close()
+  -- Ensure any active thinking animation is stopped when closing the UI
+  stop_thinking_animation()
   require("neoai.ui").close()
   chat.chat_state.is_open = false
 end
@@ -263,6 +357,8 @@ function chat.send_to_ai()
     if chat.chat_state.config.auto_scroll then
       scroll_to_bottom(chat.chat_state.buffers.chat)
     end
+    -- Start a thinking animation on the Assistant header until content begins streaming
+    start_thinking_animation()
   end
 
   chat.stream_ai_response(messages)
@@ -369,6 +465,7 @@ function chat.stream_ai_response(messages)
   local start_time = os.time()
   local last_activity = os.time()
   local timeout_timer = vim.loop.new_timer()
+  local saw_first_content = false
 
   -- Start timeout timer only after we begin streaming (not during rate limit delay)
   local function start_timeout_timer()
@@ -381,6 +478,8 @@ function chat.stream_ai_response(messages)
           timeout_timer:stop()
           timeout_timer:close()
           chat.chat_state.streaming_active = false
+          -- Stop spinner on timeout
+          stop_thinking_animation()
           chat.add_message(MESSAGE_TYPES.ERROR, "Stream timeout", { timeout = true })
           update_chat_display()
         end
@@ -394,6 +493,11 @@ function chat.stream_ai_response(messages)
   api.stream(messages, function(chunk)
     last_activity = os.time()
     if chunk.type == "content" and chunk.data ~= "" then
+      if not saw_first_content then
+        saw_first_content = true
+        -- Stop spinner on first assistant content
+        stop_thinking_animation()
+      end
       content = content .. chunk.data
       chat.update_streaming_message(content)
     elseif chunk.type == "reasoning" and chunk.data ~= "" then
@@ -436,6 +540,8 @@ function chat.stream_ai_response(messages)
   end, function()
     timeout_timer:stop()
     timeout_timer:close()
+    -- Ensure spinner is stopped on completion (covers non-content completions)
+    stop_thinking_animation()
     local msg = ""
     if reason ~= "" then
       msg = "<think>\n" .. reason .. "</think>\n\n"
@@ -463,6 +569,8 @@ function chat.stream_ai_response(messages)
     timeout_timer:stop()
     timeout_timer:close()
     chat.chat_state.streaming_active = false
+    -- Stop spinner on error
+    stop_thinking_animation()
     chat.add_message(MESSAGE_TYPES.ERROR, "AI error: " .. tostring(exit_code), {})
     update_chat_display()
 
@@ -476,6 +584,8 @@ function chat.stream_ai_response(messages)
     timeout_timer:stop()
     timeout_timer:close()
     chat.chat_state.streaming_active = false
+    -- Stop spinner on cancel
+    stop_thinking_animation()
     -- Do not persist partial content; simply refresh display
     update_chat_display()
     vim.notify("NeoAI: Streaming cancelled", vim.log.levels.INFO)
