@@ -1,6 +1,6 @@
 # NeoAI.nvim
 
-A powerful AI-enhanced chat interface for Neovim, featuring streaming responses, multi-session support, file operations, and customizable UI. Inspired by Cline and Kilo VSCode extensions.
+A powerful AI-enhanced chat interface for Neovim, featuring streaming responses, multi-session support, file operations, and customisable UI. Inspired by Cline and Kilo VSCode extensions.
 
 ## Features
 
@@ -12,7 +12,7 @@ A powerful AI-enhanced chat interface for Neovim, featuring streaming responses,
 - **Tool Calls**: Automatic invocation of file-based tools (read, write, project structure, multi-edit, LSP diagnostics, semantic search, web search)
 - **File Picker**: Quickly insert file paths into prompts using Telescope (`@@` double-at trigger)
 - **Message History**: Persistent conversation history across sessions
-- **Customizable Configuration**: Configure API provider, model, UI layout, keymaps, and more via `require('neoai').setup()`
+- **Customisable Configuration**: Configure API provider, model, UI layout, keymaps, and more via `require('neoai').setup()`
 - **API Call Delay**: Configurable delay between API calls to handle rate limiting from AI providers
 - **Multiple Providers & Presets**: Built-in presets for OpenAI, Groq, Anthropic, Ollama (local), or custom endpoints
 - **LSP Diagnostics Integration**: Read and display LSP diagnostics alongside file contents

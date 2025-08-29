@@ -1,38 +1,58 @@
 local M = {}
 
-local open_non_ai_buffer = require("neoai.ai_tools.utils.open_non_ai_buffer")
+-- ---
+-- Helper Functions
+-- ---
 
 local PRIORITY = (vim.hl or vim.highlight).priorities and (vim.hl or vim.highlight).priorities.user or 200
 local NAMESPACE = vim.api.nvim_create_namespace("neoai-inline-diff")
 local HINT_NAMESPACE = vim.api.nvim_create_namespace("neoai-inline-diff-hint")
 
--- Default keymaps (buffer-local)
 local DEFAULT_KEYS = {
-  ours = "co",     -- keep current (revert hunk)
-  theirs = "ct",   -- accept suggestion (keep new)
-  prev = "[d",     -- previous hunk
-  next = "]d",     -- next hunk
-  cancel = "q",    -- cancel review and restore original file content
+  ours = "co", -- keep current (revert hunk)
+  theirs = "ct", -- accept suggestion (keep new)
+  all = "ca", -- accept all remaining hunks
+  prev = "[d", -- previous hunk
+  next = "]d", -- next hunk
+  cancel = "q", -- cancel review and restore original file content
 }
 
--- Highlight groups (created if missing)
+-- These will only be used if the theme doesn't define the linked groups.
 local function ensure_highlights()
   local function set(name, opts)
     if vim.fn.hlexists(name) == 0 then
       vim.api.nvim_set_hl(0, name, opts)
     end
   end
-  -- Incoming/new lines background
-  set("NeoAIIncoming", { link = "DiffAdd", default = true })
-  -- Deleted/old lines shown as virtual lines
-  set("NeoAIDeleted", { link = "DiffDelete", default = true })
-  -- Inline hint text
+  set("NeoAIIncoming", { link = "DiffAdd", bg = "#1A3E2A", default = true })
+  set("NeoAIDeleted", { link = "DiffDelete", bg = "#4D2424", default = true })
   set("NeoAIInlineHint", { link = "Comment", default = true })
+end
+
+-- This avoids opening it in file explorers or other non-editing windows.
+local function find_last_active_editing_window()
+  -- nvim_list_wins() is the API equivalent and has been around much longer.
+  for _, win_handle in ipairs(vim.api.nvim_list_wins()) do
+    -- Check if the window is valid and currently shown
+    if vim.api.nvim_win_is_valid(win_handle) then
+      local bufnr = vim.api.nvim_win_get_buf(win_handle)
+      local buf_type = vim.api.nvim_get_option_value("buftype", { buf = bufnr })
+      local file_type = vim.api.nvim_get_option_value("filetype", { buf = bufnr })
+
+      -- We are looking for a normal buffer that is not a file explorer
+      if buf_type == "" and file_type ~= "chadtree" and file_type ~= "NvimTree" then
+        return win_handle -- Return the window handle
+      end
+    end
+  end
+  return 0 -- Fallback to current window
 end
 
 local function slice(tbl, s, e)
   local res = {}
-  if s == nil or e == nil then return res end
+  if s == nil or e == nil then
+    return res
+  end
   for i = s, e do
     res[#res + 1] = tbl[i]
   end
@@ -40,14 +60,17 @@ local function slice(tbl, s, e)
 end
 
 local function lines_equal(a, b)
-  if #a ~= #b then return false end
+  if #a ~= #b then
+    return false
+  end
   for i = 1, #a do
-    if a[i] ~= b[i] then return false end
+    if a[i] ~= b[i] then
+      return false
+    end
   end
   return true
 end
 
--- Compute diff hunks using vim.diff; returns a list of hunks { a_s, a_c, b_s, b_c }
 local function compute_patch(old_lines, new_lines)
   local old_str = table.concat(old_lines, "\n")
   local new_str = table.concat(new_lines, "\n")
@@ -57,305 +80,321 @@ local function compute_patch(old_lines, new_lines)
     result_type = "indices",
     ctxlen = 0,
   }) or {}
-
   if #patch == 0 and not lines_equal(old_lines, new_lines) then
     patch = { { 1, #old_lines, 1, #new_lines } }
   end
-
   return patch
 end
 
--- Build diff blocks on top of patch
-local function build_diff_blocks(old_lines, new_lines, patch)
-  local blocks = {}
-  for _, h in ipairs(patch) do
-    local a_s, a_c, b_s, b_c = h[1], h[2], h[3], h[4]
-    local block = {
-      old_lines = a_c > 0 and slice(old_lines, a_s, a_s + a_c - 1) or {},
-      new_lines = b_c > 0 and slice(new_lines, b_s, b_s + b_c - 1) or {},
-      -- Coordinates in NEW buffer
-      new_start_line = math.max(1, b_s),
-      new_end_line = math.max(0, b_s + math.max(b_c, 1) - 1),
-    }
-    table.insert(blocks, block)
-  end
+-- ---
+-- Main Apply Function
+-- ---
 
-  table.sort(blocks, function(a, b) return a.new_start_line < b.new_start_line end)
-
-  return blocks
-end
-
-local function show_hint(bufnr, lnum, keys)
-  vim.api.nvim_buf_clear_namespace(bufnr, HINT_NAMESPACE, 0, -1)
-  local hint = string.format("[<%s>: ours, <%s>: theirs, <%s>: prev, <%s>: next, <%s>: cancel]", keys.ours, keys.theirs,
-    keys.prev, keys.next, keys.cancel)
-  return vim.api.nvim_buf_set_extmark(bufnr, HINT_NAMESPACE, math.max(0, lnum - 1), -1, {
-    hl_group = "NeoAIInlineHint",
-    virt_text = { { hint, "NeoAIInlineHint" } },
-    virt_text_pos = "right_align",
-    priority = PRIORITY,
-  })
-end
-
-local function highlight_blocks(bufnr, blocks)
-  vim.api.nvim_buf_clear_namespace(bufnr, NAMESPACE, 0, -1)
-  local max_col = vim.o.columns
-  for _, b in ipairs(blocks) do
-    local start_line = math.max(1, b.new_start_line)
-    local end_line = math.max(start_line - 1, b.new_end_line)
-
-    -- Highlight incoming (new) lines
-    if #b.new_lines > 0 then
-      vim.api.nvim_buf_set_extmark(bufnr, NAMESPACE, start_line - 1, 0, {
-        hl_group = "NeoAIIncoming",
-        hl_eol = true,
-        hl_mode = "combine",
-        end_row = end_line,
-      })
-    end
-
-    -- Show deleted (old) lines as virt_lines just above the block's end
-    if #b.old_lines > 0 then
-      local virt_lines = {}
-      for _, l in ipairs(b.old_lines) do
-        local padded = l .. string.rep(" ", math.max(0, max_col - #l))
-        table.insert(virt_lines, { { padded, "NeoAIDeleted" } })
-      end
-      vim.api.nvim_buf_set_extmark(bufnr, NAMESPACE, math.max(0, end_line - 1), 0, {
-        virt_lines = virt_lines,
-        hl_mode = "combine",
-        hl_eol = true,
-      })
-    end
-  end
-end
-
-local function recalc_positions_after(blocks, removed_idx, distance)
-  for i = removed_idx + 1, #blocks do
-    blocks[i].new_start_line = blocks[i].new_start_line + distance
-    blocks[i].new_end_line = blocks[i].new_end_line + distance
-  end
-end
-
-local function find_block_at_cursor(blocks, cursor_line)
-  for idx, b in ipairs(blocks) do
-    if cursor_line >= b.new_start_line and cursor_line <= b.new_end_line then
-      return b, idx
-    end
-    -- Handle deletion-only hunks (no new lines): consider cursor at insertion point
-    if #b.new_lines == 0 and cursor_line == b.new_start_line then
-      return b, idx
-    end
-  end
-  return nil, nil
-end
-
-local function prev_block(blocks, cursor_line)
-  local best, best_dist
-  for _, b in ipairs(blocks) do
-    if b.new_start_line <= cursor_line then
-      local d = cursor_line - b.new_start_line
-      if not best_dist or d < best_dist then
-        best = b
-        best_dist = d
-      end
-    end
-  end
-  return best or blocks[#blocks]
-end
-
-local function next_block(blocks, cursor_line)
-  local best, best_dist
-  for _, b in ipairs(blocks) do
-    if b.new_start_line >= cursor_line then
-      local d = b.new_start_line - cursor_line
-      if not best_dist or d < best_dist then
-        best = b
-        best_dist = d
-      end
-    end
-  end
-  return best or blocks[1]
-end
-
-local function buf_set_lines_safe(bufnr, start_idx1, end_idx1, lines)
-  if not vim.api.nvim_buf_is_valid(bufnr) then return end
-  local max_line = vim.api.nvim_buf_line_count(bufnr)
-  local s = math.min(math.max(0, start_idx1), max_line)
-  local e = math.min(math.max(0, end_idx1), max_line)
-  vim.api.nvim_buf_set_lines(bufnr, s, e, false, lines)
-end
-
--- Apply inline diff preview and interactivity. Returns true, message on success; false, error on failure.
 function M.apply(abs_path, old_lines, new_lines, opts)
   ensure_highlights()
 
-  opts = opts or {}
-  local keys = vim.tbl_deep_extend("force", DEFAULT_KEYS, opts.keys or {})
-
-  -- Nothing to do
   if lines_equal(old_lines, new_lines) then
     return false, "No changes detected"
   end
 
-  -- Compute patch and blocks
-  local patch = compute_patch(old_lines, new_lines)
-  local blocks = build_diff_blocks(old_lines, new_lines, patch)
-  if #blocks == 0 then
-    return false, "No hunks to review"
+  -- This makes the code much cleaner and easier to reason about than closures.
+  local State = {
+    bufnr = -1,
+    augroup = -1,
+    original_lines = {},
+    blocks = {},
+    keys = vim.tbl_deep_extend("force", DEFAULT_KEYS, (opts or {}).keys or {}),
+  }
+
+  -- ---
+  -- State and UI Management Functions (now methods of State)
+  -- ---
+
+  function State:build_blocks()
+    local patch = compute_patch(old_lines, new_lines)
+    local blocks = {}
+    for _, h in ipairs(patch) do
+      local a_s, a_c, b_s, b_c = h[1], h[2], h[3], h[4]
+      table.insert(blocks, {
+        old_lines = a_c > 0 and slice(old_lines, a_s, a_s + a_c - 1) or {},
+        new_lines = b_c > 0 and slice(new_lines, b_s, b_s + b_c - 1) or {},
+        new_start_line = math.max(1, b_s),
+        new_end_line = math.max(0, b_s + math.max(b_c, 1) - 1),
+      })
+    end
+    table.sort(blocks, function(a, b)
+      return a.new_start_line < b.new_start_line
+    end)
+    self.blocks = blocks
   end
 
-  -- Open target in a non-AI buffer and replace content with NEW lines (preview 'theirs')
-  open_non_ai_buffer(abs_path)
-  local bufnr = vim.api.nvim_get_current_buf()
-  vim.bo[bufnr].modifiable = true
+  function State:highlight_blocks()
+    vim.api.nvim_buf_clear_namespace(self.bufnr, NAMESPACE, 0, -1)
+    local max_col = vim.o.columns
+    for _, b in ipairs(self.blocks) do
+      local start_line = math.max(1, b.new_start_line)
+      local end_line = math.max(start_line - 1, b.new_end_line)
 
-  -- Cache original for cancellation
-  local original_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-
-  -- Replace with new file content
-  buf_set_lines_safe(bufnr, 0, -1, new_lines)
-
-  -- Highlight diff blocks
-  highlight_blocks(bufnr, blocks)
-
-  -- Autocmds and state
-  local augroup = vim.api.nvim_create_augroup("neoai_inline_diff_" .. bufnr, { clear = true })
-  local function cleanup()
-    if not vim.api.nvim_buf_is_valid(bufnr) then return end
-    vim.api.nvim_buf_clear_namespace(bufnr, NAMESPACE, 0, -1)
-    vim.api.nvim_buf_clear_namespace(bufnr, HINT_NAMESPACE, 0, -1)
-    pcall(vim.api.nvim_del_augroup_by_id, augroup)
-    -- Remove keymaps
-    pcall(vim.keymap.del, { "n", "v" }, keys.ours, { buffer = bufnr })
-    pcall(vim.keymap.del, { "n", "v" }, keys.theirs, { buffer = bufnr })
-    pcall(vim.keymap.del, { "n", "v" }, keys.prev, { buffer = bufnr })
-    pcall(vim.keymap.del, { "n", "v" }, keys.next, { buffer = bufnr })
-    pcall(vim.keymap.del, { "n", "v" }, keys.cancel, { buffer = bufnr })
-  end
-
-  -- Cursor hint
-  vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "BufWinEnter", "BufEnter" }, {
-    buffer = bufnr,
-    group = augroup,
-    callback = function()
-      local cursor = vim.api.nvim_win_get_cursor(0)
-      local b = next_block(blocks, cursor[1])
-      if b then
-        show_hint(bufnr, b.new_start_line, keys)
+      if #b.new_lines > 0 then
+        vim.api.nvim_buf_set_extmark(self.bufnr, NAMESPACE, start_line - 1, 0, {
+          hl_group = "NeoAIIncoming",
+          hl_eol = true,
+          hl_mode = "combine",
+          end_row = end_line,
+        })
       end
-    end,
-  })
+      if #b.old_lines > 0 then
+        local virt_lines = vim
+          .iter(b.old_lines)
+          :map(function(l)
+            local padded = l .. string.rep(" ", math.max(0, max_col - #l))
+            return { { padded, "NeoAIDeleted" } }
+          end)
+          :totable()
+        vim.api.nvim_buf_set_extmark(self.bufnr, NAMESPACE, math.max(0, end_line - 1), 0, {
+          virt_lines = virt_lines,
+          hl_mode = "combine",
+          hl_eol = true,
+        })
+      end
+    end
+  end
 
-  -- BufWritePost: after successful write, just cleanup
-  vim.api.nvim_create_autocmd("BufWritePost", {
-    buffer = bufnr,
-    group = augroup,
-    callback = function()
-      if #blocks == 0 then
-        cleanup()
+  function State:show_hint(lnum)
+    vim.api.nvim_buf_clear_namespace(self.bufnr, HINT_NAMESPACE, 0, -1)
+    if not lnum then
+      return
+    end
+    local hint_text = "[<%s>:ours <%s>:theirs <%s>:all | <%s>:prev <%s>:next | <%s>:cancel]"
+    local hint = string.format(
+      hint_text,
+      self.keys.ours,
+      self.keys.theirs,
+      self.keys.all,
+      self.keys.prev,
+      self.keys.next,
+      self.keys.cancel
+    )
+    vim.api.nvim_buf_set_extmark(self.bufnr, HINT_NAMESPACE, math.max(0, lnum - 1), -1, {
+      hl_group = "NeoAIInlineHint",
+      virt_text = { { hint, "NeoAIInlineHint" } },
+      virt_text_pos = "right_align",
+      priority = PRIORITY,
+    })
+  end
+
+  function State:find_block_at_cursor(cursor_line)
+    for idx, b in ipairs(self.blocks) do
+      if cursor_line >= b.new_start_line and cursor_line <= b.new_end_line then
+        return b, idx
+      end
+      if #b.new_lines == 0 and cursor_line == b.new_start_line then
+        return b, idx
+      end
+    end
+    return nil, nil
+  end
+
+  function State:cleanup()
+    if not vim.api.nvim_buf_is_valid(self.bufnr) then
+      return
+    end
+    vim.api.nvim_buf_clear_namespace(self.bufnr, NAMESPACE, 0, -1)
+    vim.api.nvim_buf_clear_namespace(self.bufnr, HINT_NAMESPACE, 0, -1)
+    pcall(vim.api.nvim_del_augroup_by_id, self.augroup)
+    for _, key in pairs(self.keys) do
+      pcall(vim.keymap.del, { "n", "v" }, key, { buffer = self.bufnr })
+    end
+  end
+
+  -- ---
+  -- Keymap Actions
+  -- ---
+
+  function State:resolve_block(idx, keep_new_lines)
+    local block = self.blocks[idx]
+    if not block then
+      return
+    end
+
+    local distance = 0
+    if not keep_new_lines then
+      -- Reverting to 'ours'. Replace new lines with old lines in the buffer.
+      local start0 = math.max(0, block.new_start_line - 1)
+      local end0 = math.max(start0, block.new_end_line)
+      vim.api.nvim_buf_set_lines(self.bufnr, start0, end0, false, block.old_lines)
+      distance = #block.old_lines - #block.new_lines
+    end
+
+    -- Remove the resolved block from our list.
+    table.remove(self.blocks, idx)
+
+    -- After a change, we must update the coordinates of all subsequent blocks.
+    if distance ~= 0 then
+      for i = idx, #self.blocks do
+        self.blocks[i].new_start_line = self.blocks[i].new_start_line + distance
+        self.blocks[i].new_end_line = self.blocks[i].new_end_line + distance
+      end
+    end
+
+    -- Redraw all highlights based on the new state.
+    self:highlight_blocks()
+  end
+
+  function State:accept_theirs()
+    local cur = vim.api.nvim_win_get_cursor(0)
+    local _, idx = self:find_block_at_cursor(cur[1])
+    if not idx then
+      return
+    end
+    self:resolve_block(idx, true) -- true = keep new lines
+    self:goto_next()
+  end
+
+  function State:keep_ours()
+    local cur = vim.api.nvim_win_get_cursor(0)
+    local _, idx = self:find_block_at_cursor(cur[1])
+    if not idx then
+      return
+    end
+    self:resolve_block(idx, false) -- false = revert to old lines
+    self:goto_next()
+  end
+
+  function State:accept_all()
+    -- The buffer is already in the "all accepted" state.
+    -- We just need to clear the UI and state.
+    self.blocks = {}
+    self:cleanup()
+    vim.schedule(function()
+      vim.notify("NeoAI: All changes accepted. Press :w to save.", vim.log.levels.INFO)
+    end)
+  end
+
+  function State:goto_block(block)
+    if not block then
+      -- If no blocks left, cleanup and notify.
+      if #self.blocks == 0 then
+        self:cleanup()
         vim.schedule(function()
-          vim.notify("NeoAI: changes written to disk", vim.log.levels.INFO)
+          vim.notify("NeoAI: All hunks resolved. Press :w to save.", vim.log.levels.INFO)
         end)
-      else
-        -- Even if unresolved blocks remain, the user chose to save previewed content
-        cleanup()
       end
-    end,
-  })
-
-  vim.api.nvim_create_autocmd({ "BufWipeout", "BufUnload", "BufHidden" }, {
-    buffer = bufnr,
-    group = augroup,
-    callback = cleanup,
-  })
-
-  -- Keymaps
-  local function goto_block(b)
-    if not b then return end
-    local line = math.max(1, b.new_start_line)
+      return
+    end
+    local line = math.max(1, block.new_start_line)
     pcall(vim.api.nvim_win_set_cursor, 0, { line, 0 })
     vim.cmd("normal! zz")
   end
 
-  local function remove_block(idx, keep_new)
-    local b = blocks[idx]
-    if not b then return end
-    -- Adjust following blocks positions
-    local distance = 0
-    if keep_new then
-      -- keep new => buffer already contains new; positions stay unless old/new len diff matters on later blocks
-      distance = 0
-    else
-      -- revert to old => we replace current new lines with old lines, potentially shifting later blocks
-      distance = #b.old_lines - #b.new_lines
+  function State:goto_prev()
+    local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+    local target
+    for i = #self.blocks, 1, -1 do
+      if self.blocks[i].new_start_line < cursor_line then
+        target = self.blocks[i]
+        break
+      end
     end
-    table.remove(blocks, idx)
-    if distance ~= 0 then
-      recalc_positions_after(blocks, idx - 1, distance)
+    self:goto_block(target or self.blocks[#self.blocks])
+  end
+
+  function State:goto_next()
+    local cursor_line = vim.api.nvim_win_get_cursor(0)[1]
+    local target
+    for i = 1, #self.blocks do
+      if self.blocks[i].new_start_line > cursor_line then
+        target = self.blocks[i]
+        break
+      end
     end
+    self:goto_block(target or self.blocks[1])
   end
 
-  local function accept_theirs()
-    local cur = vim.api.nvim_win_get_cursor(0)
-    local b, idx = find_block_at_cursor(blocks, cur[1])
-    if not b then return end
-    -- Keep new lines, just clear extmarks for this block
-    highlight_blocks(bufnr, {})
-    remove_block(idx, true)
-    highlight_blocks(bufnr, blocks)
-    goto_block(next_block(blocks, cur[1]))
-  end
-
-  local function keep_ours()
-    local cur = vim.api.nvim_win_get_cursor(0)
-    local b, idx = find_block_at_cursor(blocks, cur[1])
-    if not b then return end
-    -- Replace this region with old lines
-    local start0 = math.max(0, b.new_start_line - 1)
-    local end0 = math.max(start0, b.new_end_line)
-    buf_set_lines_safe(bufnr, start0, end0, b.old_lines)
-    highlight_blocks(bufnr, {})
-    remove_block(idx, false)
-    highlight_blocks(bufnr, blocks)
-    goto_block(next_block(blocks, cur[1]))
-  end
-
-  local function goto_prev()
-    local cur = vim.api.nvim_win_get_cursor(0)
-    goto_block(prev_block(blocks, cur[1]))
-  end
-
-  local function goto_next()
-    local cur = vim.api.nvim_win_get_cursor(0)
-    goto_block(next_block(blocks, cur[1]))
-  end
-
-  local function cancel_review()
-    -- Restore original content and cleanup
-    buf_set_lines_safe(bufnr, 0, -1, original_lines)
-    cleanup()
+  function State:cancel_review()
+    vim.api.nvim_buf_set_lines(self.bufnr, 0, -1, false, self.original_lines)
+    self:cleanup()
     vim.schedule(function()
-      vim.notify("NeoAI: inline diff cancelled; original content restored", vim.log.levels.WARN)
+      vim.notify("NeoAI: Inline diff cancelled; original content restored.", vim.log.levels.WARN)
     end)
   end
 
-  local mapopts = { buffer = bufnr, nowait = true, silent = true }
-  vim.keymap.set({ "n", "v" }, keys.theirs, accept_theirs, mapopts)
-  vim.keymap.set({ "n", "v" }, keys.ours, keep_ours, mapopts)
-  vim.keymap.set({ "n", "v" }, keys.next, goto_next, mapopts)
-  vim.keymap.set({ "n", "v" }, keys.prev, goto_prev, mapopts)
-  vim.keymap.set({ "n", "v" }, keys.cancel, cancel_review, mapopts)
+  -- ---
+  -- Initialization
+  -- ---
 
-  -- Focus first block
-  if blocks[1] then
-    goto_block(blocks[1])
+  State:build_blocks()
+  if #State.blocks == 0 then
+    return false, "No hunks to review"
   end
 
-  local msg = string.format(
-    "🔍 Inline diff preview opened for %d change(s). Use <%s> ours, <%s> theirs, <%s>/<%s> navigate, <%s> cancel, :w to save.",
-    #blocks, keys.ours, keys.theirs, keys.prev, keys.next, keys.cancel)
+  local target_winnr = find_last_active_editing_window()
+  vim.api.nvim_set_current_win(target_winnr)
+  vim.cmd("edit " .. vim.fn.fnameescape(abs_path))
+  State.bufnr = vim.api.nvim_get_current_buf()
+  vim.bo[State.bufnr].modifiable = true
 
+  State.original_lines = old_lines -- Use original lines passed in for perfect restoration
+  vim.api.nvim_buf_set_lines(State.bufnr, 0, -1, false, new_lines)
+  State:highlight_blocks()
+
+  State.augroup = vim.api.nvim_create_augroup("neoai_inline_diff_" .. State.bufnr, { clear = true })
+  local autocmd_opts = { buffer = State.bufnr, group = State.augroup }
+
+  vim.api.nvim_create_autocmd(
+    { "CursorMoved", "CursorMovedI" },
+    vim.tbl_extend("force", autocmd_opts, {
+      callback = function()
+        local block, _ = State:find_block_at_cursor(vim.api.nvim_win_get_cursor(0)[1])
+        State:show_hint(block and block.new_start_line or nil)
+      end,
+    })
+  )
+
+  vim.api.nvim_create_autocmd(
+    "BufWritePost",
+    vim.tbl_extend("force", autocmd_opts, {
+      callback = function()
+        State:cleanup()
+        vim.schedule(function()
+          vim.notify("NeoAI: Changes written to disk.", vim.log.levels.INFO)
+        end)
+      end,
+    })
+  )
+
+  vim.api.nvim_create_autocmd(
+    { "BufWipeout", "BufUnload" },
+    vim.tbl_extend("force", autocmd_opts, {
+      callback = function()
+        State:cleanup()
+      end,
+    })
+  )
+
+  local mapopts = { buffer = State.bufnr, nowait = true, silent = true }
+  vim.keymap.set({ "n", "v" }, State.keys.theirs, function()
+    State:accept_theirs()
+  end, mapopts)
+  vim.keymap.set({ "n", "v" }, State.keys.ours, function()
+    State:keep_ours()
+  end, mapopts)
+  vim.keymap.set({ "n", "v" }, State.keys.all, function()
+    State:accept_all()
+  end, mapopts)
+  vim.keymap.set({ "n", "v" }, State.keys.next, function()
+    State:goto_next()
+  end, mapopts)
+  vim.keymap.set({ "n", "v" }, State.keys.prev, function()
+    State:goto_prev()
+  end, mapopts)
+  vim.keymap.set({ "n", "v" }, State.keys.cancel, function()
+    State:cancel_review()
+  end, mapopts)
+
+  State:goto_block(State.blocks[1])
+
+  local msg = string.format("🔍 Inline diff for %d change(s). Use keys to review.", #State.blocks)
   return true, msg
 end
 
