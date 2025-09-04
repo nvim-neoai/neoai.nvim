@@ -92,7 +92,6 @@ require('neoai').setup({
 
 - If streaming becomes active during delay, the request is cancelled
 - Clear notifications explain why requests are delayed or cancelled
-- Original timeout handling remains intact (60-second stream timeout)
 
 ## Troubleshooting
 

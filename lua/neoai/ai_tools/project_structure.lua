@@ -34,7 +34,27 @@ M.run = function(args)
   end
 
   local function escape_lua_pattern(s)
-    return (s:gsub("([%^%$%(%)%%%.%[%]%+%-%])", "%%%1"))
+    -- Escape Lua pattern magic characters by prefixing them with '%'
+    local magic = {
+      ["^"] = true,
+      ["$"] = true,
+      ["("] = true,
+      [")"] = true,
+      ["%"] = true,
+      ["."] = true,
+      ["["] = true,
+      ["]"] = true,
+      ["+"] = true,
+      ["-"] = true,
+      ["*"] = true,
+      ["?"] = true,
+    }
+    return (s:gsub(".", function(c)
+      if magic[c] then
+        return "%" .. c
+      end
+      return c
+    end))
   end
 
   local function norm_rel(p)
@@ -54,8 +74,10 @@ M.run = function(args)
     glob = glob:gsub("%*%*", placeholder)
     glob = escape_lua_pattern(glob)
     glob = glob:gsub(placeholder, ".*")
-    glob = glob:gsub("%*", "[^/]*")
-    glob = glob:gsub("%?", "[^/]")
+    -- Replace escaped single-char globs (escaped by escape_lua_pattern) with Lua patterns
+    glob = glob:gsub("%%%*", "[^/]*")
+    glob = glob:gsub("%%%?", "[^/]")
+
     return glob
   end
 
@@ -148,7 +170,7 @@ M.run = function(args)
         if not p.dir_only or is_dir then
           if p.anchored then
             -- Anchored to p.base
-            local prefix = (p.base ~= "" and (p.base .. "/") or "")
+            local prefix = (p.base ~= "" and (escape_lua_pattern(p.base) .. "/") or "")
             local full_lua = "^" .. prefix .. p.pattern .. "$"
             if relpath:match(full_lua) then
               ignored = not p.negative

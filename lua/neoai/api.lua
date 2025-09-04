@@ -60,30 +60,84 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
       for _, data_line in ipairs(vim.split(line, "\n")) do
         if vim.startswith(data_line, "data: ") then
           local chunk = data_line:sub(7)
-          if chunk ~= "[DONE]" then
-            vim.schedule(function()
-              local ok, decoded = pcall(vim.fn.json_decode, chunk)
-              if ok and decoded then
-                local finished_reason = decoded.choices and decoded.choices[1] and decoded.choices[1].finish_reason
-                local delta = decoded.choices and decoded.choices[1] and decoded.choices[1].delta
+          vim.schedule(function()
+            -- Some providers send a terminal sentinel line
+            if chunk == "[DONE]" then
+              on_complete()
+              return
+            end
+
+            local ok, decoded = pcall(vim.fn.json_decode, chunk)
+            if not (ok and decoded) then
+              return
+            end
+
+            local handled = false
+
+            -- Handler for OpenAI Responses API-style events
+            if decoded.type and type(decoded.type) == "string" then
+              local t = decoded.type
+              -- Reasoning deltas
+              if (t == "response.reasoning_text.delta" or t == "response.reasoning.delta") and decoded.delta then
+                on_chunk({ type = "reasoning", data = decoded.delta })
+                handled = true
+              elseif t == "response.reasoning_text.done" or t == "response.reasoning.done" then
+                -- Reasoning segment finished; no-op for now
+                handled = true
+              end
+
+              -- Content deltas (different providers may use slightly different names)
+              if
+                t == "response.output_text.delta"
+                or t == "response.text.delta"
+                or t == "response.delta"
+                or t == "message.delta"
+                or t == "response.output.delta"
+              then
+                local text = decoded.delta or decoded.text
+                if text and text ~= "" then
+                  on_chunk({ type = "content", data = text })
+                end
+                handled = true
+              elseif t == "response.output_text.done" or t == "response.text.done" then
+                local text = decoded.text
+                if text and text ~= "" then
+                  on_chunk({ type = "content", data = text })
+                end
+                handled = true
+              elseif t == "response.completed" or t == "response.done" then
+                on_complete()
+                handled = true
+              end
+            end
+
+            if not handled then
+              -- Fallback handler for OpenAI Chat Completions-compatible streams
+              local choice = decoded.choices and decoded.choices[1]
+              if choice then
+                local delta = choice.delta or {}
                 local content = delta and delta.content
                 local tool_calls = delta and delta.tool_calls
                 local reasons = delta and delta.reasoning
 
-                if content and content ~= vim.NIL and content ~= "" then
-                  on_chunk({ type = "content", data = content })
-                elseif tool_calls then
-                  on_chunk({ type = "tool_calls", data = tool_calls })
-                elseif reasons and reasons ~= vim.NIL and reasons ~= "" then
+                -- Emit both reasoning and content if present in the same delta
+                if reasons and reasons ~= vim.NIL and reasons ~= "" then
                   on_chunk({ type = "reasoning", data = reasons })
                 end
+                if content and content ~= vim.NIL and content ~= "" then
+                  on_chunk({ type = "content", data = content })
+                end
+                if tool_calls then
+                  on_chunk({ type = "tool_calls", data = tool_calls })
+                end
 
+                local finished_reason = choice.finish_reason
                 if finished_reason == "stop" or finished_reason == "tool_calls" then
                   on_complete()
                 end
               end
-            end)
-          end
+            end
+          end)
         end
       end
     end,
