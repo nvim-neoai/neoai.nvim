@@ -590,14 +590,11 @@ function chat.stream_ai_response(messages)
 
   local reason, content, tool_calls_response = "", "", {}
   local start_time = os.time()
-  local last_activity = os.time()
-  local timeout_timer = vim.loop.new_timer()
-  -- Expose timer so we can stop it immediately on manual cancel
-  chat.chat_state._timeout_timer = timeout_timer
   local saw_first_token = false
   -- Track live tool-call argument streaming for user feedback
   local tool_prep_seen = false
 
+  -- Helper functions from within the old stream_ai_response
   local function human_bytes(n)
     if not n or n <= 0 then
       return "0 B"
@@ -614,7 +611,7 @@ function chat.stream_ai_response(messages)
   end
 
   local function render_tool_prep_status()
-    -- Aggregate names and argument sizes from the partial tool_calls we’ve collected
+    -- (This helper function remains unchanged)
     local per_call = {}
     local total = 0
     for _, tc in ipairs(tool_calls_response) do
@@ -634,54 +631,70 @@ function chat.stream_ai_response(messages)
     if body ~= "" then
       display = display .. "\n" .. body
     end
-    -- Reuse the existing incremental assistant UI to show live prep status
     chat.update_streaming_message(reason, display)
   end
 
-  -- Start timeout timer only after we begin streaming (not during rate limit delay)
-  local function start_timeout_timer()
-    last_activity = os.time() -- Reset activity time when we actually start
-    timeout_timer:start(
-      1000,
-      1000,
-      vim.schedule_wrap(function()
-        if os.time() - last_activity > 200 then
-          safe_stop_and_close_timer(timeout_timer)
-          if chat.chat_state._timeout_timer == timeout_timer then
-            chat.chat_state._timeout_timer = nil
-          end
-          chat.chat_state.streaming_active = false
-          -- Stop spinner on timeout
-          stop_thinking_animation()
-          chat.add_message(MESSAGE_TYPES.ERROR, "Stream timeout", { timeout = true })
-          update_chat_display()
-        end
-      end)
-    )
+  -- Ensure any timer from a previous, failed run is cleared.
+  if chat.chat_state._timeout_timer then
+    safe_stop_and_close_timer(chat.chat_state._timeout_timer)
+    chat.chat_state._timeout_timer = nil
   end
 
-  -- Start timeout timer when we actually begin streaming
-  start_timeout_timer()
+  local timeout_duration_s = require("neoai.config").values.chat.thinking_timeout or 30
+  local thinking_timeout_timer = vim.loop.new_timer()
+  chat.chat_state._timeout_timer = thinking_timeout_timer
+
+  local function handle_timeout()
+    -- This function is called ONLY if the timer fires.
+    if not chat.chat_state.streaming_active then
+      return -- Already handled by another path (e.g., manual cancel)
+    end
+    -- Clean up state
+    chat.chat_state.streaming_active = false
+    safe_stop_and_close_timer(thinking_timeout_timer)
+    chat.chat_state._timeout_timer = nil
+    stop_thinking_animation()
+    disable_ctrl_c_cancel()
+
+    -- Inform the user and update UI
+    local err_msg = "NeoAI: Timed out after " .. timeout_duration_s .. "s waiting for a response."
+    chat.add_message(MESSAGE_TYPES.ERROR, err_msg, { timeout = true })
+    update_chat_display()
+    vim.notify(err_msg, vim.log.levels.ERROR)
+
+    -- Ensure Treesitter is resumed
+    if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
+      ts_resume(chat.chat_state.buffers.chat)
+      chat.chat_state._ts_suspended = false
+    end
+
+    -- Terminate the underlying API request
+    require("neoai.api").cancel()
+  end
+
+  -- Start a ONE-SHOT timer. It will fire after timeout_duration_s unless stopped.
+  thinking_timeout_timer:start(timeout_duration_s * 1000, 0, vim.schedule_wrap(handle_timeout))
 
   api.stream(messages, function(chunk)
-    last_activity = os.time()
+    -- on_chunk
+    if not saw_first_token then
+      -- This is the first piece of data from the AI. The "thinking" phase is over.
+      saw_first_token = true
+      -- Stop the "Thinking..." animation
+      stop_thinking_animation()
+      -- *** CRITICAL: Cancel the timeout timer now that we have a response. ***
+      safe_stop_and_close_timer(thinking_timeout_timer)
+      chat.chat_state._timeout_timer = nil
+    end
+
     if chunk.type == "content" and chunk.data ~= "" then
-      if not saw_first_token then
-        saw_first_token = true
-        -- Stop spinner on first assistant token (reasoning or content)
-        stop_thinking_animation()
-      end
       content = content .. chunk.data
       chat.update_streaming_message(reason, content)
     elseif chunk.type == "reasoning" and chunk.data ~= "" then
-      if not saw_first_token then
-        saw_first_token = true
-        -- Stop spinner on first assistant token (reasoning or content)
-        stop_thinking_animation()
-      end
       reason = reason .. chunk.data
       chat.update_streaming_message(reason, content)
     elseif chunk.type == "tool_calls" then
+      -- (This block is largely unchanged, but now runs without a timeout)
       if chunk.data and type(chunk.data) == "table" then
         tool_prep_seen = true
         for _, tool_call in ipairs(chunk.data) do
@@ -689,7 +702,6 @@ function chat.stream_ai_response(messages)
             local found = false
             for _, existing_call in ipairs(tool_calls_response) do
               if existing_call.index == tool_call.index then
-                -- Merge tool call fields
                 if tool_call["function"] then
                   existing_call["function"] = existing_call["function"] or {}
                   if tool_call["function"].name and tool_call["function"].name ~= "" then
@@ -704,7 +716,6 @@ function chat.stream_ai_response(messages)
                 break
               end
             end
-            -- If not already tracked, add the new tool_call
             if not found then
               local complete_tool_call = {
                 index = tool_call.index,
@@ -719,21 +730,19 @@ function chat.stream_ai_response(messages)
             end
           end
         end
-        -- Update the UI with a live status about the tool-call argument streaming
         render_tool_prep_status()
       end
     end
   end, function()
-    -- Ignore completion if we've already cancelled
+    -- on_complete
     if not chat.chat_state.streaming_active then
       return
     end
-    safe_stop_and_close_timer(timeout_timer)
-    if chat.chat_state._timeout_timer == timeout_timer then
-      chat.chat_state._timeout_timer = nil
-    end
-    -- Ensure spinner is stopped on completion (covers non-content completions)
+    -- Ensure timer is stopped on completion (robustness for empty responses)
+    safe_stop_and_close_timer(thinking_timeout_timer)
+    chat.chat_state._timeout_timer = nil
     stop_thinking_animation()
+
     local msg = ""
     if reason ~= "" then
       msg = "<think>\n" .. reason .. "</think>\n\n"
@@ -748,7 +757,6 @@ function chat.stream_ai_response(messages)
 
     disable_ctrl_c_cancel()
 
-    -- Resume Treesitter after the message is finalised
     if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
       ts_resume(chat.chat_state.buffers.chat)
       chat.chat_state._ts_suspended = false
@@ -760,51 +768,30 @@ function chat.stream_ai_response(messages)
       chat.chat_state.streaming_active = false
     end
   end, function(exit_code)
-    -- If we've already cancelled, ignore the error path
+    -- on_error
     if not chat.chat_state.streaming_active then
       return
     end
-    safe_stop_and_close_timer(timeout_timer)
-    if chat.chat_state._timeout_timer == timeout_timer then
-      chat.chat_state._timeout_timer = nil
-    end
+    safe_stop_and_close_timer(thinking_timeout_timer)
+    chat.chat_state._timeout_timer = nil
     chat.chat_state.streaming_active = false
-    -- Stop spinner on error
     stop_thinking_animation()
     chat.add_message(MESSAGE_TYPES.ERROR, "AI error: " .. tostring(exit_code), {})
     update_chat_display()
-
     disable_ctrl_c_cancel()
-
-    -- Ensure Treesitter is resumed on error as well
     if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
       ts_resume(chat.chat_state.buffers.chat)
       chat.chat_state._ts_suspended = false
     end
   end, function()
-    -- If we've already handled a manual cancel path, do nothing
+    -- on_cancel (manual Ctrl-C)
     if not chat.chat_state.streaming_active then
       return
     end
-    -- on_cancel
-    safe_stop_and_close_timer(timeout_timer)
-    if chat.chat_state._timeout_timer == timeout_timer then
-      chat.chat_state._timeout_timer = nil
-    end
-    chat.chat_state.streaming_active = false
-    -- Stop spinner on cancel
-    stop_thinking_animation()
-    -- Do not persist partial content; simply refresh display
-    update_chat_display()
-    vim.notify("NeoAI: Streaming cancelled", vim.log.levels.INFO)
-
-    disable_ctrl_c_cancel()
-
-    -- Resume Treesitter on cancel
-    if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
-      ts_resume(chat.chat_state.buffers.chat)
-      chat.chat_state._ts_suspended = false
-    end
+    safe_stop_and_close_timer(thinking_timeout_timer)
+    chat.chat_state._timeout_timer = nil
+    -- The rest of the cancel logic is handled by chat.cancel_stream()
+    -- We just ensure the timer is cleaned up here for robustness.
   end)
 end
 
