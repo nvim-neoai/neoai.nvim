@@ -742,15 +742,13 @@ function chat.stream_ai_response(messages)
     chat.chat_state._timeout_timer = nil
     stop_thinking_animation()
 
-    local msg = ""
-    if reason ~= "" then
-      msg = "<think>\n" .. reason .. "</think>\n\n"
-    end
-    if content ~= "" then
-      msg = msg .. content
-    end
-    if msg ~= "" then
-      chat.add_message(MESSAGE_TYPES.ASSISTANT, msg, { response_time = os.time() - start_time })
+    -- If no tool calls are pending, it means this is a final text response from the AI.
+    -- In this case, save the content as the assistant's message.
+    -- If tool calls ARE pending, we do nothing here and let get_tool_calls handle the UI.
+    if #tool_calls_response == 0 then
+      if content ~= "" then
+        chat.add_message(MESSAGE_TYPES.ASSISTANT, content, { response_time = os.time() - start_time })
+      end
     end
     update_chat_display()
 
