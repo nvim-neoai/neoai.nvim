@@ -371,6 +371,20 @@ end
 -- Send to AI
 function chat.send_to_ai()
   local data = { tools = chat.format_tools() }
+
+  -- Always include project structure in system prompt
+  do
+    local ok, ps_tool = pcall(require, "neoai.ai_tools.project_structure")
+    local ps_text = ""
+    if ok and ps_tool and type(ps_tool.run) == "function" then
+      local ok_run, ps = pcall(ps_tool.run, { path = nil, max_depth = 2 })
+      if ok_run and type(ps) == "string" then
+        ps_text = ps
+      end
+    end
+    data.project_structure = ps_text
+  end
+
   local system_prompt = prompt.get_system_prompt(data)
   local messages = {
     { role = "system", content = system_prompt },

@@ -27,20 +27,6 @@ When answering in English, only ever use British English spelling and phraseolog
 
 ---
 
-## 🧠 Reasoning Format
-
-Wrap your reasoning in `<think>...</think>` tags. This helps separate thought process from final output.
-
-```text
-<think>
-Explain the problem and outline your plan step by step.
-</think>
-```
-
-<normal output continues here...>
-
----
-
 ## 🛠️ Technical Principles
 
 - Follow best practices for each language and framework.
@@ -72,4 +58,13 @@ When responding:
 
 ---
 
+## Project Context
+
+The following is the current project structure. Use it to understand the repository layout and file locations. If you need more context, call the relevant tools (e.g., Read, Grep).
+
+%project_structure
+
+---
+
 > You are not just a tool; you're a reliable coding partner.
+

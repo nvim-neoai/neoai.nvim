@@ -32,7 +32,8 @@ function M.get_system_prompt(data)
     return ""
   end
   data = data or {}
-  return tpl:gsub("%%(%w+)", function(key)
+  -- Allow keys with underscores as well as alphanumerics
+  return tpl:gsub("%%([%w_]+)", function(key)
     return data[key] or ""
   end)
 end
