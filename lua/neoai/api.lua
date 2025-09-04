@@ -3,9 +3,8 @@ local conf = require("neoai.config").values.api
 local tool_schemas = require("neoai.ai_tools").tool_schemas
 local api = {}
 
--- Track current streaming job and cancellation state
+-- Track current streaming job
 local current_job = nil
-local cancelled = false
 
 local function merge_tables(t1, t2)
   local result = {}
@@ -25,7 +24,7 @@ end
 --- @param on_error fun(code: integer)
 --- @param on_cancel fun()|nil
 function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
-  cancelled = false
+  -- Create a new job and mark it as not cancelled
 
   local basic_payload = {
     model = conf.model,
@@ -88,31 +87,37 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
         end
       end
     end,
-    on_exit = function(_, exit_code)
+    on_exit = function(j, exit_code)
       vim.schedule(function()
-        -- Clear current job handle
-        current_job = nil
-        if cancelled then
-          if on_cancel then
-            on_cancel()
+        -- Only act if this exiting job is still the active one
+        if current_job == j then
+          current_job = nil
+          if j._neoai_cancelled then
+            if on_cancel then
+              on_cancel()
+            end
+          elseif exit_code ~= 0 then
+            on_error(exit_code)
           end
-        elseif exit_code ~= 0 then
-          on_error(exit_code)
         end
       end)
     end,
   })
 
+  -- Mark job as not cancelled initially
+  current_job._neoai_cancelled = false
   current_job:start()
 end
 
 --- Cancel current streaming request (if any)
 function api.cancel()
-  cancelled = true
   local job = current_job
   if not job then
     return
   end
+
+  -- Mark this specific job as cancelled
+  job._neoai_cancelled = true
 
   -- For curl SSE, closing pipes (shutdown) is not sufficient; send a signal.
   -- Try SIGTERM first; if it doesn't exit quickly, escalate to SIGKILL.
