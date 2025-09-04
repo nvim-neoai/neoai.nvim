@@ -43,7 +43,6 @@ end
 function M.init(config)
   json_path = config.database_path or (vim.fn.stdpath("data") .. "/neoai.json")
   load()
-  vim.notify("NeoAI: Using JSON file for storage at " .. json_path, vim.log.levels.WARN)
   return true
 end
 

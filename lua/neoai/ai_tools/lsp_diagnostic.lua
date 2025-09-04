@@ -13,11 +13,13 @@ M.meta = {
         description = "(Optional) When true, also retrieve available code actions for the file.",
       },
       file_path = {
-        type = "boolean",
-        description = "(Optional) When true, also retrieve available code actions for the file.",
+        type = "string",
+        description = string.format(
+          "(Optional) Path to the file to inspect (relative to cwd %s). If omitted, uses current buffer.",
+          vim.fn.getcwd()
+        ),
       },
     },
-    required = { "include_code_actions", "file_path" },
     additionalProperties = false,
   },
 }
@@ -30,9 +32,10 @@ local severity_map = {
 }
 
 M.run = function(args)
+  args = args or {}
   -- Determine buffer number
   local bufnr
-  if args.file_path and #args.file_path > 0 then
+  if type(args.file_path) == "string" and #args.file_path > 0 then
     -- Load or get existing buffer
     bufnr = vim.fn.bufnr(args.file_path, true)
     vim.fn.bufload(bufnr)
