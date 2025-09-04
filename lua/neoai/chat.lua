@@ -404,25 +404,37 @@ end
 function chat.send_to_ai()
   local data = { tools = chat.format_tools() }
 
-  -- Always include project structure in system prompt
-  do
-    local ok, ps_tool = pcall(require, "neoai.ai_tools.project_structure")
-    local ps_text = ""
-    if ok and ps_tool and type(ps_tool.run) == "function" then
-      local ok_run, ps = pcall(ps_tool.run, { path = nil, max_depth = 2 })
-      if ok_run and type(ps) == "string" then
-        ps_text = ps
-      end
-    end
-    data.project_structure = ps_text
-  end
-
   local system_prompt = prompt.get_system_prompt(data)
   local messages = {
     { role = "system", content = system_prompt },
   }
 
   local session_msgs = storage.get_session_messages(chat.chat_state.current_session.id, 100)
+
+  -- If this is the first user message, inject a synthetic turn with the project structure
+  if #session_msgs == 2 and session_msgs[2].type == MESSAGE_TYPES.USER then
+    local project_structure_text = ""
+    local ok, ps_tool = pcall(require, "neoai.ai_tools.project_structure")
+    if ok and ps_tool and type(ps_tool.run) == "function" then
+      local ok_run, ps = pcall(ps_tool.run, { path = nil, max_depth = 2 })
+      if ok_run and type(ps) == "string" then
+        project_structure_text = ps
+      end
+    end
+
+    if project_structure_text ~= "" then
+      table.insert(messages, {
+        role = "user",
+        content = "To help me with my request, first provide a summary of the project structure.",
+      })
+      table.insert(messages, {
+        role = "assistant",
+        content = "Of course. Here is the project structure:\n\n" .. project_structure_text,
+      })
+    end
+  end
+
+  -- Append recent conversation
   local recent = {}
   for i = #session_msgs, 1, -1 do
     local msg = session_msgs[i]
@@ -452,7 +464,6 @@ function chat.send_to_ai()
     if chat.chat_state.config.auto_scroll then
       scroll_to_bottom(chat.chat_state.buffers.chat)
     end
-    -- Start a thinking animation on the Assistant header until tokens begin streaming
     start_thinking_animation()
   end
 
@@ -467,7 +478,6 @@ function chat.get_tool_calls(tool_schemas)
     return
   end
 
-  -- Show which tool(s) are being called
   local call_names = {}
   for _, sc in ipairs(tool_schemas) do
     if sc and sc["function"] and sc["function"].name and sc["function"].name ~= "" then
@@ -524,7 +534,6 @@ function chat.get_tool_calls(tool_schemas)
     end
   end
 
-  -- If an interactive inline diff is active, pause and resume once the review is finished
   if vim.g.neoai_inline_diff_active then
     chat.add_message(
       MESSAGE_TYPES.SYSTEM,
@@ -532,7 +541,6 @@ function chat.get_tool_calls(tool_schemas)
       {}
     )
 
-    -- Create/clear a dedicated augroup and wait for the close event
     local grp = vim.api.nvim_create_augroup("NeoAIInlineDiffAwait", { clear = true })
     vim.api.nvim_create_autocmd("User", {
       group = grp,
@@ -546,7 +554,6 @@ function chat.get_tool_calls(tool_schemas)
           msg = msg .. ": " .. path
         end
         chat.add_message(MESSAGE_TYPES.SYSTEM, msg, {})
-        -- Resume assistant after user finishes review
         apply_delay(function()
           chat.send_to_ai()
         end)
@@ -556,7 +563,6 @@ function chat.get_tool_calls(tool_schemas)
   end
 
   if completed > 0 then
-    -- Apply rate limit delay after tool execution
     apply_delay(function()
       chat.send_to_ai()
     end)
@@ -582,7 +588,6 @@ function chat.stream_ai_response(messages)
   chat.chat_state.streaming_active = true
   enable_ctrl_c_cancel()
 
-  -- Suspend Treesitter highlighting while streaming to avoid parser errors with partial code blocks
   if chat.chat_state.is_open and chat.chat_state.buffers.chat and not chat.chat_state._ts_suspended then
     ts_suspend(chat.chat_state.buffers.chat)
     chat.chat_state._ts_suspended = true
@@ -591,10 +596,9 @@ function chat.stream_ai_response(messages)
   local reason, content, tool_calls_response = "", "", {}
   local start_time = os.time()
   local saw_first_token = false
-  -- Track live tool-call argument streaming for user feedback
   local tool_prep_seen = false
+  local has_completed = false
 
-  -- Helper functions from within the old stream_ai_response
   local function human_bytes(n)
     if not n or n <= 0 then
       return "0 B"
@@ -611,7 +615,6 @@ function chat.stream_ai_response(messages)
   end
 
   local function render_tool_prep_status()
-    -- (This helper function remains unchanged)
     local per_call = {}
     local total = 0
     for _, tc in ipairs(tool_calls_response) do
@@ -634,55 +637,49 @@ function chat.stream_ai_response(messages)
     chat.update_streaming_message(reason, display)
   end
 
-  -- Ensure any timer from a previous, failed run is cleared.
   if chat.chat_state._timeout_timer then
     safe_stop_and_close_timer(chat.chat_state._timeout_timer)
     chat.chat_state._timeout_timer = nil
   end
 
-  local timeout_duration_s = require("neoai.config").values.chat.thinking_timeout or 30
+  local timeout_duration_s = require("neoai.config").values.chat.thinking_timeout or 200
   local thinking_timeout_timer = vim.loop.new_timer()
   chat.chat_state._timeout_timer = thinking_timeout_timer
 
   local function handle_timeout()
-    -- This function is called ONLY if the timer fires.
-    if not chat.chat_state.streaming_active then
-      return -- Already handled by another path (e.g., manual cancel)
+    if has_completed then
+      return
     end
-    -- Clean up state
+    has_completed = true
+
+    if not chat.chat_state.streaming_active then
+      return
+    end
     chat.chat_state.streaming_active = false
     safe_stop_and_close_timer(thinking_timeout_timer)
     chat.chat_state._timeout_timer = nil
     stop_thinking_animation()
     disable_ctrl_c_cancel()
 
-    -- Inform the user and update UI
     local err_msg = "NeoAI: Timed out after " .. timeout_duration_s .. "s waiting for a response."
     chat.add_message(MESSAGE_TYPES.ERROR, err_msg, { timeout = true })
     update_chat_display()
     vim.notify(err_msg, vim.log.levels.ERROR)
 
-    -- Ensure Treesitter is resumed
     if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
       ts_resume(chat.chat_state.buffers.chat)
       chat.chat_state._ts_suspended = false
     end
 
-    -- Terminate the underlying API request
     require("neoai.api").cancel()
   end
 
-  -- Start a ONE-SHOT timer. It will fire after timeout_duration_s unless stopped.
   thinking_timeout_timer:start(timeout_duration_s * 1000, 0, vim.schedule_wrap(handle_timeout))
 
   api.stream(messages, function(chunk)
-    -- on_chunk
     if not saw_first_token then
-      -- This is the first piece of data from the AI. The "thinking" phase is over.
       saw_first_token = true
-      -- Stop the "Thinking..." animation
       stop_thinking_animation()
-      -- *** CRITICAL: Cancel the timeout timer now that we have a response. ***
       safe_stop_and_close_timer(thinking_timeout_timer)
       chat.chat_state._timeout_timer = nil
     end
@@ -694,7 +691,6 @@ function chat.stream_ai_response(messages)
       reason = reason .. chunk.data
       chat.update_streaming_message(reason, content)
     elseif chunk.type == "tool_calls" then
-      -- (This block is largely unchanged, but now runs without a timeout)
       if chunk.data and type(chunk.data) == "table" then
         tool_prep_seen = true
         for _, tool_call in ipairs(chunk.data) do
@@ -734,11 +730,14 @@ function chat.stream_ai_response(messages)
       end
     end
   end, function()
-    -- on_complete
+    if has_completed then
+      return
+    end
+    has_completed = true
+
     if not chat.chat_state.streaming_active then
       return
     end
-    -- Ensure timer is stopped on completion (robustness for empty responses)
     safe_stop_and_close_timer(thinking_timeout_timer)
     chat.chat_state._timeout_timer = nil
     stop_thinking_animation()
@@ -768,7 +767,11 @@ function chat.stream_ai_response(messages)
       chat.chat_state.streaming_active = false
     end
   end, function(exit_code)
-    -- on_error
+    if has_completed then
+      return
+    end
+    has_completed = true
+
     if not chat.chat_state.streaming_active then
       return
     end
@@ -784,14 +787,11 @@ function chat.stream_ai_response(messages)
       chat.chat_state._ts_suspended = false
     end
   end, function()
-    -- on_cancel (manual Ctrl-C)
     if not chat.chat_state.streaming_active then
       return
     end
     safe_stop_and_close_timer(thinking_timeout_timer)
     chat.chat_state._timeout_timer = nil
-    -- The rest of the cancel logic is handled by chat.cancel_stream()
-    -- We just ensure the timer is cleaned up here for robustness.
   end)
 end
 
@@ -832,10 +832,8 @@ end
 -- Allow cancelling current stream
 function chat.cancel_stream()
   if chat.chat_state.streaming_active then
-    -- Immediately reflect cancellation in state and UI so user can continue typing
     chat.chat_state.streaming_active = false
 
-    -- Stop spinner and any active timeout timers
     stop_thinking_animation()
     local t = chat.chat_state._timeout_timer
     if t then
@@ -843,21 +841,17 @@ function chat.cancel_stream()
       chat.chat_state._timeout_timer = nil
     end
 
-    -- Disable Ctrl-C hook immediately
     disable_ctrl_c_cancel()
 
-    -- Resume Treesitter immediately to avoid long highlight suspension
     if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
       ts_resume(chat.chat_state.buffers.chat)
       chat.chat_state._ts_suspended = false
     end
 
-    -- Clear transient Assistant header from buffer
     if chat.chat_state.is_open then
       update_chat_display()
     end
 
-    -- Finally, instruct API layer to terminate the stream/job
     local api = require("neoai.api")
     api.cancel()
   end

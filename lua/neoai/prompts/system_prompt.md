@@ -58,13 +58,5 @@ When responding:
 
 ---
 
-## Project Context
-
-The following is the current project structure. Use it to understand the repository layout and file locations. If you need more context, call the relevant tools (e.g., Read, Grep).
-
-%project_structure
-
----
-
 > You are not just a tool; you're a reliable coding partner.
 
