@@ -4,18 +4,17 @@ A powerful AI-enhanced chat interface for Neovim, featuring streaming responses,
 
 ## Features
 
-- **Multi-Session Support**: Create, switch, rename, and delete multiple chat sessions
-- **Persistent Storage**: Chat history is saved using a JSON file, based on your configuration
-- **Interactive Chat UI**: Split-window chat interface with Markdown rendering
-- **Session Management**: Telescope-powered session picker for easy navigation
-- **Streaming Responses**: Real-time assistant replies with response time display
-- **Tool Calls**: Automatic invocation of file-based tools (read, write, project structure, multi-edit, LSP diagnostics, semantic search, web search)
-- **File Picker**: Quickly insert file paths into prompts using Telescope (`@@` double-at trigger)
-- **Message History**: Persistent conversation history across sessions
-- **Customisable Configuration**: Configure API provider, model, UI layout, keymaps, and more via `require('neoai').setup()`
-- **API Call Delay**: Configurable delay between API calls to handle rate limiting from AI providers
-- **Multiple Providers & Presets**: Built-in presets for OpenAI, Groq, Anthropic, Ollama (local), or custom endpoints
-- **LSP Diagnostics Integration**: Read and display LSP diagnostics alongside file contents
+- Multi-Session Support: Create, switch, rename, and delete multiple chat sessions
+- Persistent Storage: Chat history is saved using a JSON file, based on your configuration
+- Interactive Chat UI: Split-window chat interface with Markdown rendering
+- Session Management: Telescope-powered session picker for easy navigation
+- Streaming Responses: Real-time assistant replies with response time display
+- Tool Calls: Automatic invocation of file-based tools (read, write, project structure, multi-edit, LSP diagnostics, semantic search, web search)
+- File Picker: Quickly insert file paths into prompts using Telescope (`@@` double-at trigger)
+- Message History: Persistent conversation history across sessions
+- Customisable Configuration: Configure API provider, model, UI layout, keymaps, and more via `require('neoai').setup()`
+- Multiple Providers & Presets: Built-in presets for OpenAI, Groq, Anthropic, Ollama (local), or custom endpoints
+- LSP Diagnostics Integration: Read and display LSP diagnostics alongside file contents
 
 ## Installation
 
@@ -66,8 +65,6 @@ require("neoai").setup({
     url     = "https://api.openai.com/v1/chat/completions",
     api_key = "YOUR_API_KEY",
     model   = "gpt-4",
-    -- Delay between AI API calls (ms) to handle rate limiting
-    api_call_delay = 0, -- default: 0 ms (no delay)
     max_completion_tokens  = 4096,
     api_key_header         = "Authorization",
     api_key_format         = "Bearer %s",
@@ -114,7 +111,6 @@ local openai_config = function()
       model = "o4-mini",
       api_key = OPENAI_API_KEY,
       max_completion_tokens = 4096 * 2,
-      api_call_delay = 5000,
       additional_kwargs = {
         reasoning_effort = "medium",
       },
@@ -133,7 +129,6 @@ local groq_config = function()
       model = "openai/gpt-oss-20b",
       api_key = GROQ_API_KEY,
       max_completion_tokens = 8192,
-      api_call_delay = 5000,
       additional_kwargs = {
         reasoning_effort = "medium",
       },
@@ -160,9 +155,9 @@ return {
 
 NeoAI supports two persistent storage backends for chat sessions and message history:
 
-- **JSON file**: If you set `database_path` to a `.json` file (e.g. `neoai.json`), NeoAI will use a plain JSON file for storage (no dependencies required).
+- JSON file: If you set `database_path` to a `.json` file (e.g. `neoai.json`), NeoAI will use a plain JSON file for storage (no dependencies required).
 
-**Example:**
+Example:
 
 ```lua
 chat = {
@@ -190,7 +185,7 @@ chat = {
 
 ## Keymaps
 
-**In Normal Mode** (global):
+In Normal Mode (global):
 
 - `<leader>ai` - Open Chat
 - `<leader>at` - Toggle Chat
@@ -199,13 +194,13 @@ chat = {
 - `<leader>an` - New Session
 - `<leader>aS` - Show Statistics
 
-**In Chat Input Buffer**:
+In Chat Input Buffer:
 
 - `<CR>` - Send Message
 - `<C-c>` - Close Chat
-- `@@` - Trigger file picker (inserts `` `path/to/file` `` in backticks)
+- `@@` - Trigger file picker (inserts `path/to/file` in backticks)
 
-**In Chat History Buffer**:
+In Chat History Buffer:
 
 - `<C-c>` or `q` - Close Chat
 
@@ -222,19 +217,19 @@ chat = {
 
 NeoAI includes a convenient file picker integration powered by Telescope:
 
-- **Trigger**: Type `@@` (double-at) in the chat input buffer
-- **Function**: Opens Telescope file picker to browse and select files
-- **Result**: Selected file path is inserted as `` `path/to/file` `` (in backticks) at cursor position
-- **Use case**: Quickly reference files in your prompts for AI analysis, editing, or discussion
+- Trigger: Type `@@` (double-at) in the chat input buffer
+- Function: Opens Telescope file picker to browse and select files
+- Result: Selected file path is inserted as `path/to/file` (in backticks) at cursor position
+- Use case: Quickly reference files in your prompts for AI analysis, editing, or discussion
 
-**Example workflow:**
+Example workflow:
 
 1. Type: "Please review this file: @@"
 2. Telescope opens, select your file (e.g., `src/main.js`)
-3. Result: "Please review this file: `` `src/main.js` ``"
+3. Result: "Please review this file: `src/main.js`"
 4. Send message for AI to analyse the file
 
-**Why `@@` (double-at)?**
+Why `@@` (double-at)?
 
 - Allows typing single `@` symbols normally (common in code, emails, etc.)
 - Only triggers file picker when you specifically need it
@@ -308,3 +303,4 @@ For advanced help, open an issue on GitHub.
 ## Licence
 
 This project is licensed under the [MIT Licence](LICENCE).
+

@@ -6,7 +6,7 @@
 ---@field api_key string
 ---@field model string
 ---@field max_completion_tokens number|nil
----@field api_call_delay? number -- Delay in milliseconds between API calls for rate limiting
+
 ---@field additional_kwargs? table<string, any>
 
 ---@class KeymapConfig
@@ -61,7 +61,6 @@ config.defaults = {
     api_key_format = "Bearer %s", -- Default format
     model = "your-ai-model-here",
     max_completion_tokens = 4096,
-    api_call_delay = 0, -- Delay in milliseconds between API calls (0 = no delay)
   },
 
   -- Chat UI settings
