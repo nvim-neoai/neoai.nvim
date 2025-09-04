@@ -197,6 +197,7 @@ function chat.setup()
     sessions = {},
     is_open = false,
     streaming_active = false,
+    _timeout_timer = nil, -- handle to the active stream timeout timer (if any)
     _ts_suspended = false, -- track if Treesitter is suspended for chat buffer
     thinking = { active = false, timer = nil, extmark_id = nil, frame = 1 },
   }
@@ -545,6 +546,8 @@ function chat.stream_ai_response(messages)
   local start_time = os.time()
   local last_activity = os.time()
   local timeout_timer = vim.loop.new_timer()
+  -- Expose timer so we can stop it immediately on manual cancel
+  chat.chat_state._timeout_timer = timeout_timer
   local saw_first_token = false
 
   -- Start timeout timer only after we begin streaming (not during rate limit delay)
@@ -624,8 +627,15 @@ function chat.stream_ai_response(messages)
       end
     end
   end, function()
+    -- Ignore completion if we've already cancelled
+    if not chat.chat_state.streaming_active then
+      return
+    end
     timeout_timer:stop()
     timeout_timer:close()
+    if chat.chat_state._timeout_timer == timeout_timer then
+      chat.chat_state._timeout_timer = nil
+    end
     -- Ensure spinner is stopped on completion (covers non-content completions)
     stop_thinking_animation()
     local msg = ""
@@ -654,8 +664,15 @@ function chat.stream_ai_response(messages)
       chat.chat_state.streaming_active = false
     end
   end, function(exit_code)
+    -- If we've already cancelled, ignore the error path
+    if not chat.chat_state.streaming_active then
+      return
+    end
     timeout_timer:stop()
     timeout_timer:close()
+    if chat.chat_state._timeout_timer == timeout_timer then
+      chat.chat_state._timeout_timer = nil
+    end
     chat.chat_state.streaming_active = false
     -- Stop spinner on error
     stop_thinking_animation()
@@ -670,9 +687,16 @@ function chat.stream_ai_response(messages)
       chat.chat_state._ts_suspended = false
     end
   end, function()
+    -- If we've already handled a manual cancel path, do nothing
+    if not chat.chat_state.streaming_active then
+      return
+    end
     -- on_cancel
     timeout_timer:stop()
     timeout_timer:close()
+    if chat.chat_state._timeout_timer == timeout_timer then
+      chat.chat_state._timeout_timer = nil
+    end
     chat.chat_state.streaming_active = false
     -- Stop spinner on cancel
     stop_thinking_animation()
@@ -692,7 +716,7 @@ end
 
 -- Update streaming display (shows reasoning and content as they arrive)
 function chat.update_streaming_message(reason, content)
-  if not chat.chat_state.is_open then
+  if not chat.chat_state.is_open or not chat.chat_state.streaming_active then
     return
   end
   local display = ""
@@ -727,7 +751,35 @@ end
 -- Allow cancelling current stream
 function chat.cancel_stream()
   if chat.chat_state.streaming_active then
+    -- Immediately reflect cancellation in state and UI so user can continue typing
+    chat.chat_state.streaming_active = false
+
+    -- Stop spinner and any active timeout timers
     stop_thinking_animation()
+    local t = chat.chat_state._timeout_timer
+    if t then
+      pcall(function()
+        t:stop()
+        t:close()
+      end)
+      chat.chat_state._timeout_timer = nil
+    end
+
+    -- Disable Ctrl-C hook immediately
+    disable_ctrl_c_cancel()
+
+    -- Resume Treesitter immediately to avoid long highlight suspension
+    if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
+      ts_resume(chat.chat_state.buffers.chat)
+      chat.chat_state._ts_suspended = false
+    end
+
+    -- Clear transient Assistant header from buffer
+    if chat.chat_state.is_open then
+      update_chat_display()
+    end
+
+    -- Finally, instruct API layer to terminate the stream/job
     local api = require("neoai.api")
     api.cancel()
   end
