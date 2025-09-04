@@ -62,6 +62,11 @@ local function strip_cr(lines)
   end
 end
 
+-- Normalise Windows line endings in a single string
+local function normalise_eol(s)
+  return (s or ""):gsub("\r\n", "\n"):gsub("\r", "")
+end
+
 -- Create a unified diff text using Neovim's builtin diff
 local function unified_diff(old_lines, new_lines)
   local old_str = table.concat(old_lines or {}, "\n")
@@ -80,10 +85,17 @@ local function compute_line_offsets(content)
   return offsets
 end
 
+-- Build a whitespace-insensitive Lua pattern from a literal string
+local function build_fuzzy_pattern(s)
+  local esc = utils.escape_pattern(s or "")
+  return esc:gsub("%s+", "%%%%s+")
+end
+
 -- Replace occurrences of old_string within a [start_line, end_line] range of the content string.
+-- Tries literal match first, then whitespace-insensitive matching.
 -- Returns: new_content, replacements_count
 local function replace_in_range(content, old_string, new_string, start_line, end_line)
-  local lines = split_lines(content)
+  local lines = split_lines(normalise_eol(content))
   strip_cr(lines)
   local total_lines = #lines
 
@@ -94,8 +106,8 @@ local function replace_in_range(content, old_string, new_string, start_line, end
     return content, 0
   end
 
-  local offsets = compute_line_offsets(table.concat(lines, "\n"))
   local content_norm = table.concat(lines, "\n")
+  local offsets = compute_line_offsets(content_norm)
 
   local start_off = offsets[start_line] or 1
   local end_off = (offsets[end_line + 1] or (#content_norm + 1)) - 1
@@ -104,18 +116,27 @@ local function replace_in_range(content, old_string, new_string, start_line, end
   local region = content_norm:sub(start_off, end_off)
   local after = content_norm:sub(end_off + 1)
 
-  local old_pat = utils.escape_pattern(old_string)
-  local repl_fn = function()
-    return new_string
+  local replacement = normalise_eol(new_string)
+
+  -- 1) Literal match
+  local literal_pat = utils.escape_pattern(normalise_eol(old_string))
+  local replaced_region, count = region:gsub(literal_pat, function()
+    return replacement
+  end)
+  if count > 0 then
+    return before .. replaced_region .. after, count
   end
 
-  local replaced_region, count = region:gsub(old_pat, repl_fn)
-  if count == 0 then
-    return content_norm, 0
+  -- 2) Whitespace-insensitive match
+  local fuzzy_pat = build_fuzzy_pattern(old_string)
+  replaced_region, count = region:gsub(fuzzy_pat, function()
+    return replacement
+  end)
+  if count > 0 then
+    return before .. replaced_region .. after, count
   end
 
-  local new_content = before .. replaced_region .. after
-  return new_content, count
+  return content_norm, 0
 end
 
 M.run = function(args)
@@ -138,12 +159,33 @@ M.run = function(args)
 
   local cwd = vim.fn.getcwd()
   local abs_path = cwd .. "/" .. rel_path
-  local file, err = io.open(abs_path, "r")
-  if not file then
-    return "Cannot open file: " .. tostring(err)
+
+  -- Prefer current buffer content if the file is loaded (avoids mismatch with unsaved changes)
+  local content
+  do
+    local target = vim.fn.fnamemodify(abs_path, ":p")
+    for _, b in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_loaded(b) then
+        local name = vim.api.nvim_buf_get_name(b)
+        if vim.fn.fnamemodify(name, ":p") == target then
+          local lines = vim.api.nvim_buf_get_lines(b, 0, -1, false)
+          content = table.concat(lines, "\n")
+          break
+        end
+      end
+    end
+    if content == nil then
+      local file, err = io.open(abs_path, "r")
+      if not file then
+        return "Cannot open file: " .. tostring(err)
+      end
+      content = file:read("*a") or ""
+      file:close()
+    end
   end
-  local content = file:read("*a") or ""
-  file:close()
+
+  -- Normalise for consistent matching across platforms
+  content = normalise_eol(content)
 
   -- Prepare original and working lines (strip CR to avoid Windows EOL mismatch)
   local orig_lines = split_lines(content)
@@ -159,28 +201,39 @@ M.run = function(args)
 
     -- If nothing matched within the range, fallback: replace the first occurrence anywhere in the file
     if count == 0 then
-      local old_pat = utils.escape_pattern(edit.old_string)
       local repl_fn = function()
-        return edit.new_string
+        return normalise_eol(edit.new_string)
       end
+      local old_pat = utils.escape_pattern(normalise_eol(edit.old_string))
       local replaced_once, c = working_content:gsub(old_pat, repl_fn, 1)
       if c and c > 0 then
         working_content = replaced_once
         count = c
+      else
+        -- Try fuzzy anywhere in the file
+        local fuzzy_pat = build_fuzzy_pattern(edit.old_string)
+        replaced_once, c = working_content:gsub(fuzzy_pat, repl_fn, 1)
+        if c and c > 0 then
+          working_content = replaced_once
+          count = c
+        end
       end
     else
       working_content = new_content
     end
 
     if count == 0 then
-      return string.format("No match for '%s'. Consider using the Write tool.", edit.old_string)
+      return string.format(
+        "No match for '%s'. Try adjusting the start/end line range or provide a more precise old_string.",
+        edit.old_string
+      )
     end
 
     total_replacements = total_replacements + count
   end
 
   if total_replacements == 0 then
-    return string.format("No replacements made in %s. Consider using the Write tool.", rel_path)
+    return string.format("No replacements made in %s.", rel_path)
   end
 
   -- Compose updated lines for diff/UI
