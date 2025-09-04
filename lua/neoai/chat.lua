@@ -563,6 +563,48 @@ function chat.stream_ai_response(messages)
   -- Expose timer so we can stop it immediately on manual cancel
   chat.chat_state._timeout_timer = timeout_timer
   local saw_first_token = false
+  -- Track live tool-call argument streaming for user feedback
+  local tool_prep_seen = false
+
+  local function human_bytes(n)
+    if not n or n <= 0 then
+      return "0 B"
+    end
+    if n < 1024 then
+      return string.format("%d B", n)
+    elseif n < 1024 * 1024 then
+      return string.format("%.1f KB", n / 1024)
+    elseif n < 1024 * 1024 * 1024 then
+      return string.format("%.2f MB", n / (1024 * 1024))
+    else
+      return string.format("%.2f GB", n / (1024 * 1024 * 1024))
+    end
+  end
+
+  local function render_tool_prep_status()
+    -- Aggregate names and argument sizes from the partial tool_calls we’ve collected
+    local per_call = {}
+    local total = 0
+    for _, tc in ipairs(tool_calls_response) do
+      local name = (tc["function"] and tc["function"].name) or (tc.type or "function")
+      local args = (tc["function"] and tc["function"].arguments) or ""
+      local size = #args
+      total = total + size
+      table.insert(per_call, string.format("- %s: %s", name ~= "" and name or "function", human_bytes(size)))
+    end
+
+    local header = "Preparing tool calls…"
+    if #per_call > 0 then
+      header = header .. string.format(" (total %s)", human_bytes(total))
+    end
+    local body = table.concat(per_call, "\n")
+    local display = header
+    if body ~= "" then
+      display = display .. "\n" .. body
+    end
+    -- Reuse the existing incremental assistant UI to show live prep status
+    chat.update_streaming_message(reason, display)
+  end
 
   -- Start timeout timer only after we begin streaming (not during rate limit delay)
   local function start_timeout_timer()
@@ -607,16 +649,22 @@ function chat.stream_ai_response(messages)
       chat.update_streaming_message(reason, content)
     elseif chunk.type == "tool_calls" then
       if chunk.data and type(chunk.data) == "table" then
+        tool_prep_seen = true
         for _, tool_call in ipairs(chunk.data) do
           if tool_call and tool_call.index then
             local found = false
             for _, existing_call in ipairs(tool_calls_response) do
               if existing_call.index == tool_call.index then
-                -- Merge tool call arguments
-                if tool_call["function"] and tool_call["function"].arguments then
+                -- Merge tool call fields
+                if tool_call["function"] then
                   existing_call["function"] = existing_call["function"] or {}
-                  existing_call["function"].arguments = (existing_call["function"].arguments or "")
-                    .. tool_call["function"].arguments
+                  if tool_call["function"].name and tool_call["function"].name ~= "" then
+                    existing_call["function"].name = tool_call["function"].name
+                  end
+                  if tool_call["function"].arguments and tool_call["function"].arguments ~= "" then
+                    existing_call["function"].arguments = (existing_call["function"].arguments or "")
+                      .. tool_call["function"].arguments
+                  end
                 end
                 found = true
                 break
@@ -624,7 +672,6 @@ function chat.stream_ai_response(messages)
             end
             -- If not already tracked, add the new tool_call
             if not found then
-              -- Ensure we have a complete tool call structure
               local complete_tool_call = {
                 index = tool_call.index,
                 id = tool_call.id,
@@ -638,6 +685,8 @@ function chat.stream_ai_response(messages)
             end
           end
         end
+        -- Update the UI with a live status about the tool-call argument streaming
+        render_tool_prep_status()
       end
     end
   end, function()
