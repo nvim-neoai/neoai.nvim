@@ -109,20 +109,34 @@ end
 --- Cancel current streaming request (if any)
 function api.cancel()
   cancelled = true
-  if current_job then
-    -- Try to gracefully shutdown; if not available or fails, kill the process
-    local ok = false
-    if type(current_job.shutdown) == "function" then
-      ok = pcall(function()
-        current_job:shutdown()
-      end)
-    end
-    if not ok and type(current_job.kill) == "function" then
-      pcall(function()
-        current_job:kill()
-      end)
-    end
+  local job = current_job
+  if not job then
+    return
   end
+
+  -- For curl SSE, closing pipes (shutdown) is not sufficient; send a signal.
+  -- Try SIGTERM first; if it doesn't exit quickly, escalate to SIGKILL.
+  if type(job.kill) == "function" then
+    pcall(function()
+      job:kill(15) -- SIGTERM
+    end)
+  end
+
+  -- Close stdio to avoid dangling handles
+  if type(job.shutdown) == "function" then
+    pcall(function()
+      job:shutdown()
+    end)
+  end
+
+  -- Safety net: if job is still alive shortly after, force kill
+  vim.defer_fn(function()
+    if current_job == job and type(job.kill) == "function" then
+      pcall(function()
+        job:kill(9) -- SIGKILL
+      end)
+    end
+  end, 150)
 end
 
 return api

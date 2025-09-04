@@ -696,6 +696,7 @@ end
 -- Allow cancelling current stream
 function chat.cancel_stream()
   if chat.chat_state.streaming_active then
+    stop_thinking_animation()
     local api = require("neoai.api")
     api.cancel()
   end
