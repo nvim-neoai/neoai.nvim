@@ -8,7 +8,6 @@ local tool_names = {
   "project_structure",
   "read",
   "grep",
-  "write",
   "multi_edit",
   "lsp_diagnostic",
   "lsp_code_action",

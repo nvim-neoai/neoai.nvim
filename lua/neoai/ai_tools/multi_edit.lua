@@ -10,7 +10,11 @@ M.meta = {
     properties = {
       file_path = {
         type = "string",
-        description = string.format("The path of the file to modify (relative to cwd %s)", vim.fn.getcwd()),
+        description = string.format("The path of the file to modify or create (relative to cwd %s)", vim.fn.getcwd()),
+      },
+      ensure_dir = {
+        type = "boolean",
+        description = "Create parent directories if they do not exist (default: true)",
       },
       edits = {
         type = "array",
@@ -18,7 +22,10 @@ M.meta = {
         items = {
           type = "object",
           properties = {
-            old_string = { type = "string", description = "Exact text to replace" },
+            old_string = {
+              type = "string",
+              description = "Exact text to replace (empty string means insert at beginning of file)",
+            },
             new_string = { type = "string", description = "The replacement text" },
             start_line = { type = "integer", description = "(Optional) Start line number for this edit (1-based)" },
             end_line = { type = "integer", description = "(Optional) End line number for this edit (1-based)" },
@@ -162,6 +169,7 @@ M.run = function(args)
 
   -- Prefer current buffer content if the file is loaded (avoids mismatch with unsaved changes)
   local content
+  local file_exists = false
   do
     local target = vim.fn.fnamemodify(abs_path, ":p")
     for _, b in ipairs(vim.api.nvim_list_bufs()) do
@@ -170,17 +178,20 @@ M.run = function(args)
         if vim.fn.fnamemodify(name, ":p") == target then
           local lines = vim.api.nvim_buf_get_lines(b, 0, -1, false)
           content = table.concat(lines, "\n")
+          file_exists = true
           break
         end
       end
     end
     if content == nil then
-      local file, err = io.open(abs_path, "r")
-      if not file then
-        return "Cannot open file: " .. tostring(err)
+      local file = io.open(abs_path, "r")
+      if file then
+        file_exists = true
+        content = file:read("*a") or ""
+        file:close()
+      else
+        content = ""
       end
-      content = file:read("*a") or ""
-      file:close()
     end
   end
 
@@ -243,6 +254,16 @@ M.run = function(args)
   -- If headless (no UI), auto-apply and return summary + diff + diagnostics.
   local uis = vim.api.nvim_list_uis()
   if not uis or #uis == 0 then
+    -- Ensure parent directory if requested
+    local ensure_dir = args.ensure_dir
+    if ensure_dir == nil then
+      ensure_dir = true
+    end
+    if ensure_dir then
+      local dir = vim.fn.fnamemodify(abs_path, ":h")
+      vim.fn.mkdir(dir, "p")
+    end
+
     local f, ferr = io.open(abs_path, "w")
     if not f then
       return "Failed to open file for writing: " .. tostring(ferr)
@@ -250,8 +271,13 @@ M.run = function(args)
     f:write(table.concat(updated_lines, "\n"))
     f:close()
 
-    local summary =
-      string.format("Applied %d replacement(s) to %s (auto-approved, headless)", total_replacements, rel_path)
+    local summary
+    if file_exists then
+      summary = string.format("Applied %d replacement(s) to %s (auto-approved, headless)", total_replacements, rel_path)
+    else
+      summary =
+        string.format("Created %s with %d replacement(s) (auto-approved, headless)", rel_path, total_replacements)
+    end
     local diff_text = unified_diff(orig_lines, updated_lines)
     local diag_tool = require("neoai.ai_tools.lsp_diagnostic")
     local diagnostics = diag_tool.run({ file_path = rel_path, include_code_actions = false })
@@ -264,7 +290,22 @@ M.run = function(args)
   if ok then
     return msg
   else
-    return msg or "Failed to open inline diff"
+    -- If diff cannot open (e.g. new file), ensure dirs and write directly as a fallback
+    local ensure_dir = args.ensure_dir
+    if ensure_dir == nil then
+      ensure_dir = true
+    end
+    if ensure_dir then
+      local dir = vim.fn.fnamemodify(abs_path, ":h")
+      vim.fn.mkdir(dir, "p")
+    end
+    local f, ferr = io.open(abs_path, "w")
+    if f then
+      f:write(table.concat(updated_lines, "\n"))
+      f:close()
+      return string.format("Wrote %s (inline diff failed: %s)", rel_path, msg or "unknown error")
+    end
+    return msg or ("Failed to open inline diff and could not write file: " .. tostring(ferr))
   end
 end
 
