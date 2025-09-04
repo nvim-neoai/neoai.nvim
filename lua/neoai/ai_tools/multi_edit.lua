@@ -64,6 +64,35 @@ local function copy_lines(t)
   return c
 end
 
+-- Safely gsub on a single line and expand to multiple lines if replacement contains newlines.
+-- Returns: replacements_made, lines_inserted
+local function gsub_expand_line(lines, idx, old_pat, replacement_text, limit)
+  local repl_fn = function()
+    return replacement_text
+  end
+  local new_line, c
+  if limit ~= nil then
+    new_line, c = lines[idx]:gsub(old_pat, repl_fn, limit)
+  else
+    new_line, c = lines[idx]:gsub(old_pat, repl_fn)
+  end
+  if c > 0 then
+    if new_line:find("\n", 1, true) then
+      local parts = split_lines(new_line)
+      lines[idx] = parts[1]
+      -- Insert the remaining parts as new lines after idx
+      for p = 2, #parts do
+        table.insert(lines, idx + p - 1, parts[p])
+      end
+      return c, (#parts - 1)
+    else
+      lines[idx] = new_line
+      return c, 0
+    end
+  end
+  return 0, 0
+end
+
 -- Create a unified diff text using Neovim's builtin diff
 local function unified_diff(old_lines, new_lines)
   local old_str = table.concat(old_lines or {}, "\n")
@@ -113,20 +142,26 @@ M.run = function(args)
     end_line = math.min(#lines, end_line)
 
     -- Replace within specified line range
-    for idx = start_line, end_line do
-      local new_line, c = lines[idx]:gsub(old_pat, edit.new_string)
+    local idx = start_line
+    while idx <= end_line do
+      local c, inserted = gsub_expand_line(lines, idx, old_pat, edit.new_string)
       if c > 0 then
-        lines[idx] = new_line
         count = count + c
+        -- Keep scanning only the original region, but account for inserted lines
+        end_line = end_line + inserted
+        -- Skip over the newly inserted lines so we don't process replacement text
+        idx = idx + 1 + inserted
+      else
+        idx = idx + 1
       end
     end
 
     if count == 0 then
       -- No replacements in range: fallback to first occurrence in entire file
-      for idx, line in ipairs(lines) do
+      for i2, line in ipairs(lines) do
         if line:find(edit.old_string, 1, true) then
-          lines[idx] = line:gsub(old_pat, edit.new_string, 1)
-          count = 1
+          local c2, _ = gsub_expand_line(lines, i2, old_pat, edit.new_string, 1)
+          count = c2
           break
         end
       end
@@ -156,7 +191,8 @@ M.run = function(args)
     f:write(table.concat(updated_lines, "\n"))
     f:close()
 
-    local summary = string.format("Applied %d replacement(s) to %s (auto-approved, headless)", total_replacements, rel_path)
+    local summary =
+      string.format("Applied %d replacement(s) to %s (auto-approved, headless)", total_replacements, rel_path)
     local diff_text = unified_diff(orig_lines, updated_lines)
     local diag_tool = require("neoai.ai_tools.lsp_diagnostic")
     local diagnostics = diag_tool.run({ file_path = rel_path, include_code_actions = false })
