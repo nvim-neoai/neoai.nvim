@@ -477,6 +477,37 @@ function chat.get_tool_calls(tool_schemas)
     end
   end
 
+  -- If an interactive inline diff is active, pause and resume once the review is finished
+  if vim.g.neoai_inline_diff_active then
+    chat.add_message(
+      MESSAGE_TYPES.SYSTEM,
+      "Awaiting your review in the inline diff. The assistant will resume once you finish.",
+      {}
+    )
+
+    -- Create/clear a dedicated augroup and wait for the close event
+    local grp = vim.api.nvim_create_augroup("NeoAIInlineDiffAwait", { clear = true })
+    vim.api.nvim_create_autocmd("User", {
+      group = grp,
+      pattern = "NeoAIInlineDiffClosed",
+      once = true,
+      callback = function(ev)
+        local action = ev and ev.data and ev.data.action or "closed"
+        local path = ev and ev.data and ev.data.path or ""
+        local msg = "Inline diff finished (" .. action .. ")"
+        if path ~= "" then
+          msg = msg .. ": " .. path
+        end
+        chat.add_message(MESSAGE_TYPES.SYSTEM, msg, {})
+        -- Resume assistant after user finishes review
+        apply_delay(function()
+          chat.send_to_ai()
+        end)
+      end,
+    })
+    return
+  end
+
   if completed > 0 then
     -- Apply rate limit delay after tool execution
     apply_delay(function()

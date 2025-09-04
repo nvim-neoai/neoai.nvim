@@ -263,13 +263,10 @@ function M.apply(abs_path, old_lines, new_lines, opts)
   end
 
   function State:accept_all()
-    -- The buffer is already in the "all accepted" state.
-    -- We just need to clear the UI and state.
+    -- Mark all hunks as resolved and fire the close event (reuses goto_block finalisation)
     self.blocks = {}
-    self:cleanup()
-    vim.schedule(function()
-      vim.notify("NeoAI: All changes accepted. Press :w to save.", vim.log.levels.INFO)
-    end)
+    -- Delegate to goto_block(nil) to cleanup, clear the active flag, and emit NeoAIInlineDiffClosed
+    self:goto_block(nil)
   end
 
   function State:goto_block(block)
@@ -282,15 +279,11 @@ function M.apply(abs_path, old_lines, new_lines, opts)
           -- Mark review finished (no more hunks). User may still :w to save.
           vim.g.neoai_inline_diff_active = false
           vim.schedule(function()
-            pcall(
-              vim.api.nvim_exec_autocmds,
-              "User",
-              {
-                pattern = "NeoAIInlineDiffClosed",
-                modeline = false,
-                data = { action = "resolved", path = abs_path, bufnr = self.bufnr },
-              }
-            )
+            pcall(vim.api.nvim_exec_autocmds, "User", {
+              pattern = "NeoAIInlineDiffClosed",
+              modeline = false,
+              data = { action = "resolved", path = abs_path, bufnr = self.bufnr },
+            })
             vim.notify("NeoAI: All hunks resolved. Press :w to save.", vim.log.levels.INFO)
           end)
         end
@@ -333,15 +326,11 @@ function M.apply(abs_path, old_lines, new_lines, opts)
       self.event_fired = true
       vim.g.neoai_inline_diff_active = false
       vim.schedule(function()
-        pcall(
-          vim.api.nvim_exec_autocmds,
-          "User",
-          {
-            pattern = "NeoAIInlineDiffClosed",
-            modeline = false,
-            data = { action = "cancelled", path = abs_path, bufnr = self.bufnr },
-          }
-        )
+        pcall(vim.api.nvim_exec_autocmds, "User", {
+          pattern = "NeoAIInlineDiffClosed",
+          modeline = false,
+          data = { action = "cancelled", path = abs_path, bufnr = self.bufnr },
+        })
         vim.notify("NeoAI: Inline diff cancelled; original content restored.", vim.log.levels.WARN)
       end)
     end
@@ -388,15 +377,11 @@ function M.apply(abs_path, old_lines, new_lines, opts)
           State.event_fired = true
           vim.g.neoai_inline_diff_active = false
           vim.schedule(function()
-            pcall(
-              vim.api.nvim_exec_autocmds,
-              "User",
-              {
-                pattern = "NeoAIInlineDiffClosed",
-                modeline = false,
-                data = { action = "written", path = abs_path, bufnr = State.bufnr },
-              }
-            )
+            pcall(vim.api.nvim_exec_autocmds, "User", {
+              pattern = "NeoAIInlineDiffClosed",
+              modeline = false,
+              data = { action = "written", path = abs_path, bufnr = State.bufnr },
+            })
             vim.notify("NeoAI: Changes written to disk.", vim.log.levels.INFO)
           end)
         end
@@ -413,15 +398,11 @@ function M.apply(abs_path, old_lines, new_lines, opts)
           State.event_fired = true
           vim.g.neoai_inline_diff_active = false
           vim.schedule(function()
-            pcall(
-              vim.api.nvim_exec_autocmds,
-              "User",
-              {
-                pattern = "NeoAIInlineDiffClosed",
-                modeline = false,
-                data = { action = "closed", path = abs_path, bufnr = State.bufnr },
-              }
-            )
+            pcall(vim.api.nvim_exec_autocmds, "User", {
+              pattern = "NeoAIInlineDiffClosed",
+              modeline = false,
+              data = { action = "closed", path = abs_path, bufnr = State.bufnr },
+            })
           end)
         end
       end,

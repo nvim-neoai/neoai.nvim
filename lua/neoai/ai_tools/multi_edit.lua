@@ -55,42 +55,11 @@ local function split_lines(str)
   return vim.split(str, "\n", { plain = true })
 end
 
--- Shallow copy of an array-like table (lines)
-local function copy_lines(t)
-  local c = {}
-  for i = 1, #t do
-    c[i] = t[i]
+-- Normalise Windows line endings in-place (strip trailing \r)
+local function strip_cr(lines)
+  for i = 1, #lines do
+    lines[i] = lines[i]:gsub("\r$", "")
   end
-  return c
-end
-
--- Safely gsub on a single line and expand to multiple lines if replacement contains newlines.
--- Returns: replacements_made, lines_inserted
-local function gsub_expand_line(lines, idx, old_pat, replacement_text, limit)
-  local repl_fn = function()
-    return replacement_text
-  end
-  local new_line, c
-  if limit ~= nil then
-    new_line, c = lines[idx]:gsub(old_pat, repl_fn, limit)
-  else
-    new_line, c = lines[idx]:gsub(old_pat, repl_fn)
-  end
-  if c > 0 then
-    if new_line:find("\n", 1, true) then
-      local parts = split_lines(new_line)
-      lines[idx] = parts[1]
-      -- Insert the remaining parts as new lines after idx
-      for p = 2, #parts do
-        table.insert(lines, idx + p - 1, parts[p])
-      end
-      return c, (#parts - 1)
-    else
-      lines[idx] = new_line
-      return c, 0
-    end
-  end
-  return 0, 0
 end
 
 -- Create a unified diff text using Neovim's builtin diff
@@ -100,6 +69,53 @@ local function unified_diff(old_lines, new_lines)
   ---@diagnostic disable-next-line: missing-fields
   local diff = vim.diff(old_str, new_str, { result_type = "unified", algorithm = "histogram" })
   return diff or "(no changes)"
+end
+
+-- Compute 1-based byte offsets for the start of each line in a content string
+local function compute_line_offsets(content)
+  local offsets = { 1 }
+  for pos in content:gmatch("()\n") do
+    offsets[#offsets + 1] = pos + 1
+  end
+  return offsets
+end
+
+-- Replace occurrences of old_string within a [start_line, end_line] range of the content string.
+-- Returns: new_content, replacements_count
+local function replace_in_range(content, old_string, new_string, start_line, end_line)
+  local lines = split_lines(content)
+  strip_cr(lines)
+  local total_lines = #lines
+
+  start_line = math.max(1, start_line or 1)
+  end_line = math.min(total_lines, end_line or total_lines)
+
+  if total_lines == 0 or start_line > end_line then
+    return content, 0
+  end
+
+  local offsets = compute_line_offsets(table.concat(lines, "\n"))
+  local content_norm = table.concat(lines, "\n")
+
+  local start_off = offsets[start_line] or 1
+  local end_off = (offsets[end_line + 1] or (#content_norm + 1)) - 1
+
+  local before = content_norm:sub(1, start_off - 1)
+  local region = content_norm:sub(start_off, end_off)
+  local after = content_norm:sub(end_off + 1)
+
+  local old_pat = utils.escape_pattern(old_string)
+  local repl_fn = function()
+    return new_string
+  end
+
+  local replaced_region, count = region:gsub(old_pat, repl_fn)
+  if count == 0 then
+    return content_norm, 0
+  end
+
+  local new_content = before .. replaced_region .. after
+  return new_content, count
 end
 
 M.run = function(args)
@@ -126,45 +142,34 @@ M.run = function(args)
   if not file then
     return "Cannot open file: " .. tostring(err)
   end
-  local content = file:read("*a")
+  local content = file:read("*a") or ""
   file:close()
 
+  -- Prepare original and working lines (strip CR to avoid Windows EOL mismatch)
   local orig_lines = split_lines(content)
-  local lines = copy_lines(orig_lines)
+  strip_cr(orig_lines)
+  local working_content = table.concat(orig_lines, "\n")
+
   local total_replacements = 0
 
   for _, edit in ipairs(edits) do
-    local old_pat = utils.escape_pattern(edit.old_string)
-    local count = 0
-    local start_line = edit.start_line or 1
-    local end_line = edit.end_line or #lines
-    start_line = math.max(1, start_line)
-    end_line = math.min(#lines, end_line)
+    -- First, attempt replacements restricted to the specified line range (supports multi-line needles)
+    local new_content, count =
+      replace_in_range(working_content, edit.old_string, edit.new_string, edit.start_line, edit.end_line)
 
-    -- Replace within specified line range
-    local idx = start_line
-    while idx <= end_line do
-      local c, inserted = gsub_expand_line(lines, idx, old_pat, edit.new_string)
-      if c > 0 then
-        count = count + c
-        -- Keep scanning only the original region, but account for inserted lines
-        end_line = end_line + inserted
-        -- Skip over the newly inserted lines so we don't process replacement text
-        idx = idx + 1 + inserted
-      else
-        idx = idx + 1
-      end
-    end
-
+    -- If nothing matched within the range, fallback: replace the first occurrence anywhere in the file
     if count == 0 then
-      -- No replacements in range: fallback to first occurrence in entire file
-      for i2, line in ipairs(lines) do
-        if line:find(edit.old_string, 1, true) then
-          local c2, _ = gsub_expand_line(lines, i2, old_pat, edit.new_string, 1)
-          count = c2
-          break
-        end
+      local old_pat = utils.escape_pattern(edit.old_string)
+      local repl_fn = function()
+        return edit.new_string
       end
+      local replaced_once, c = working_content:gsub(old_pat, repl_fn, 1)
+      if c and c > 0 then
+        working_content = replaced_once
+        count = c
+      end
+    else
+      working_content = new_content
     end
 
     if count == 0 then
@@ -178,8 +183,9 @@ M.run = function(args)
     return string.format("No replacements made in %s. Consider using the Write tool.", rel_path)
   end
 
-  -- Compose updated content in memory
-  local updated_lines = lines
+  -- Compose updated lines for diff/UI
+  local updated_lines = split_lines(working_content)
+  strip_cr(updated_lines)
 
   -- If headless (no UI), auto-apply and return summary + diff + diagnostics.
   local uis = vim.api.nvim_list_uis()
