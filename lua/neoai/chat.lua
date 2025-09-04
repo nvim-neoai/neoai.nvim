@@ -2,6 +2,41 @@ local chat = {}
 local ai_tools = require("neoai.ai_tools")
 local prompt = require("neoai.prompt")
 local storage = require("neoai.storage")
+local uv = vim.loop
+
+-- Safe helper to stop and close a libuv timer without throwing when it's already closing
+local function safe_stop_and_close_timer(t)
+  if not t then
+    return
+  end
+  -- If handle is already closing, do nothing
+  local closing = false
+  if uv and uv.is_closing then
+    local ok, cl = pcall(uv.is_closing, t)
+    closing = ok and cl or false
+  end
+  if closing then
+    return
+  end
+  -- Stop the timer (may no-op if not started)
+  pcall(function()
+    if t.stop then
+      t:stop()
+    end
+  end)
+  -- Close if not already closing
+  if uv and uv.is_closing then
+    local ok2, cl2 = pcall(uv.is_closing, t)
+    if ok2 and cl2 then
+      return
+    end
+  end
+  pcall(function()
+    if t.close then
+      t:close()
+    end
+  end)
+end
 
 -- Treesitter helpers to avoid crashes during streaming updates of partial Markdown/code
 local function ts_suspend(bufnr)
@@ -49,10 +84,7 @@ local function stop_thinking_animation()
     return
   end
   if st.timer then
-    pcall(function()
-      st.timer:stop()
-      st.timer:close()
-    end)
+    safe_stop_and_close_timer(st.timer)
     st.timer = nil
   end
   if
@@ -614,8 +646,10 @@ function chat.stream_ai_response(messages)
       1000,
       vim.schedule_wrap(function()
         if os.time() - last_activity > 200 then
-          timeout_timer:stop()
-          timeout_timer:close()
+          safe_stop_and_close_timer(timeout_timer)
+          if chat.chat_state._timeout_timer == timeout_timer then
+            chat.chat_state._timeout_timer = nil
+          end
           chat.chat_state.streaming_active = false
           -- Stop spinner on timeout
           stop_thinking_animation()
@@ -694,8 +728,7 @@ function chat.stream_ai_response(messages)
     if not chat.chat_state.streaming_active then
       return
     end
-    timeout_timer:stop()
-    timeout_timer:close()
+    safe_stop_and_close_timer(timeout_timer)
     if chat.chat_state._timeout_timer == timeout_timer then
       chat.chat_state._timeout_timer = nil
     end
@@ -731,8 +764,7 @@ function chat.stream_ai_response(messages)
     if not chat.chat_state.streaming_active then
       return
     end
-    timeout_timer:stop()
-    timeout_timer:close()
+    safe_stop_and_close_timer(timeout_timer)
     if chat.chat_state._timeout_timer == timeout_timer then
       chat.chat_state._timeout_timer = nil
     end
@@ -755,8 +787,7 @@ function chat.stream_ai_response(messages)
       return
     end
     -- on_cancel
-    timeout_timer:stop()
-    timeout_timer:close()
+    safe_stop_and_close_timer(timeout_timer)
     if chat.chat_state._timeout_timer == timeout_timer then
       chat.chat_state._timeout_timer = nil
     end
@@ -821,10 +852,7 @@ function chat.cancel_stream()
     stop_thinking_animation()
     local t = chat.chat_state._timeout_timer
     if t then
-      pcall(function()
-        t:stop()
-        t:close()
-      end)
+      safe_stop_and_close_timer(t)
       chat.chat_state._timeout_timer = nil
     end
 
