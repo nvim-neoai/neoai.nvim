@@ -176,13 +176,20 @@ end
 function M.get_session_messages(session_id, limit)
   limit = limit or 1000
   local messages = {}
+  -- Collect all messages for the session in chronological order
   for _, m in ipairs(data.messages) do
     if m.session_id == session_id then
       table.insert(messages, vim.deepcopy(m))
-      if #messages >= limit then
-        break
-      end
     end
+  end
+  -- If a limit is provided, return the last `limit` messages (most recent)
+  if limit and #messages > limit then
+    local start_idx = #messages - limit + 1
+    local sliced = {}
+    for i = start_idx, #messages do
+      table.insert(sliced, messages[i])
+    end
+    return sliced
   end
   return messages
 end
