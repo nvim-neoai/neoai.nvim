@@ -1,6 +1,6 @@
 # WHEN TO USE THIS TOOL
 
-- Use when you need to search for specific patterns or text in files across your codebase.
+- Prefer TreeSitterQuery for structural code extraction. Use Grep only when you need raw text search across files.
 
 # HOW TO USE
 

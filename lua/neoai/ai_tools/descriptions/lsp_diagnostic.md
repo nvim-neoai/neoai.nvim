@@ -1,6 +1,7 @@
 # WHEN TO USE THIS TOOL
 
 - Use when you want to retrieve and format LSP diagnostics for a file or buffer.
+- Prefer TreeSitterQuery for structural code analysis. Use this when you need LSP-derived issues.
 - Use to get code actions at the current cursor position.
 
 # HOW TO USE

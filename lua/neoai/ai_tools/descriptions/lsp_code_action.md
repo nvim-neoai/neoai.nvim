@@ -1,6 +1,6 @@
 # WHEN TO USE THIS TOOL
 
-- Use when you want to retrieve or apply available LSP code actions for a file or buffer.
+- Prefer TreeSitterQuery for structural extraction. Use this only when you need LSP-provided code actions.
 
 # HOW TO USE
 

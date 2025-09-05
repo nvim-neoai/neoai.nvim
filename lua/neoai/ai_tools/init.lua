@@ -7,8 +7,9 @@ M.tool_schemas = {}
 local tool_names = {
   "project_structure",
   "read",
-  "grep",
+  "treesitter_query",
   "multi_edit",
+  "grep",
   "lsp_diagnostic",
   "lsp_code_action",
 }
@@ -32,7 +33,7 @@ end
 -- Return metadata for use with AI tools (e.g., OpenAI function calling)
 local get_tool_schemas = function()
   M.tool_schemas = {} -- Clear old schemas
-  for _, tool in pairs(M.tools) do
+  for _, tool in ipairs(M.tools) do
     table.insert(M.tool_schemas, {
       type = "function",
       ["function"] = tool.meta,

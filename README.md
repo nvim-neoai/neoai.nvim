@@ -9,12 +9,21 @@ A powerful AI-enhanced chat interface for Neovim, featuring streaming responses,
 - Interactive Chat UI: Split-window chat interface with Markdown rendering
 - Session Management: Telescope-powered session picker for easy navigation
 - Streaming Responses: Real-time assistant replies with response time display
-- Tool Calls: Automatic invocation of file-based tools (read, write, project structure, multi-edit, LSP diagnostics, semantic search, web search)
+- Tool Calls: Automatic invocation of tools (project structure, read files, Tree-sitter queries, multi-edit, grep, LSP diagnostics and code actions)
 - File Picker: Quickly insert file paths into prompts using Telescope (`@@` double-at trigger)
 - Message History: Persistent conversation history across sessions
 - Customisable Configuration: Configure API provider, model, UI layout, keymaps, and more via `require('neoai').setup()`
 - Multiple Providers & Presets: Built-in presets for OpenAI, Groq, Anthropic, Ollama (local), or custom endpoints
 - LSP Diagnostics Integration: Read and display LSP diagnostics alongside file contents
+
+## Tools Overview
+
+- TreeSitterQuery — Preferred for structural code extraction using Tree-sitter queries (fast and precise).
+- Grep — Plain text search across files; use when you really need raw text matches or when no parser is available.
+- LspDiagnostic — Retrieve diagnostics for a buffer; LspCodeAction — list/apply code actions.
+- Read — Read file contents; MultiEdit — apply edits to a file; ProjectStructure — show directory tree.
+
+The assistant will favour TreeSitterQuery over Grep or LSP actions unless the use case specifically requires them.
 
 ## Installation
 
@@ -26,6 +35,7 @@ A powerful AI-enhanced chat interface for Neovim, featuring streaming responses,
   dependencies = {
     "nvim-lua/plenary.nvim",
     "nvim-telescope/telescope.nvim",
+    "nvim-treesitter/nvim-treesitter", -- optional, recommended for TreeSitterQuery
   },
   config = function()
     require("neoai").setup({
@@ -41,7 +51,7 @@ A powerful AI-enhanced chat interface for Neovim, featuring streaming responses,
 ```lua
 use {
   "nvim-neoai/neoai.nvim",
-  requires = { "nvim-lua/plenary.nvim", "nvim-telescope/telescope.nvim" },
+  requires = { "nvim-lua/plenary.nvim", "nvim-telescope/telescope.nvim", "nvim-treesitter/nvim-treesitter" },
   config = function()
     require("neoai").setup({
       preset = "openai",
@@ -50,6 +60,11 @@ use {
   end,
 }
 ```
+
+### Optional dependencies
+
+- ripgrep (rg): required for the Grep tool.
+- nvim-treesitter: recommended for TreeSitterQuery; ensure language parsers are installed (e.g., `:TSInstall lua`).
 
 ## Configuration
 
@@ -235,6 +250,25 @@ Why `@@` (double-at)?
 - Only triggers file picker when you specifically need it
 - Prevents accidental popup when typing regular text
 
+### Tree-sitter Query examples
+
+Ask the assistant to use the TreeSitterQuery tool when you need structural information extracted from code.
+
+- Lua — list function names in a file
+  - Query:
+```
+(function_declaration name: (identifier) @name)
+```
+
+- Python — list class and function names
+  - Query:
+```
+(class_definition name: (identifier) @class.name)
+(function_definition name: (identifier) @func.name)
+```
+
+You may also specify `file_path`, `language`, `captures`, `include_text`, `include_ranges`, `first_only`, and `max_results`.
+
 ### 🔄 Multi-Session Workflow
 
 ---
@@ -294,7 +328,8 @@ All sessions are automatically saved to persistent JSON file.
 
 ## Troubleshooting
 
-- Ensure `plenary.nvim` and `telescope.nvim` are installed.
+- Ensure `plenary.nvim` and `telescope.nvim` are installed. For TreeSitterQuery, install `nvim-treesitter` and relevant parsers (e.g., `:TSInstall lua`).
+- For Grep, install `ripgrep` (rg) and ensure it is available in your PATH.
 - Check for errors with `:messages`.
 - Verify Neovim version (>=0.7 recommended).
 
