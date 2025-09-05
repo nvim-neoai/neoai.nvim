@@ -62,22 +62,12 @@ require("neoai").setup({
 
   -- Override API settings if needed
   api = {
-    url     = "https://api.openai.com/v1/chat/responses",
-    api_key = os.getenv("OPENAI_API_KEY"),
-    model   = "gpt-5",
-    max_completion_tokens  = 128000,
-    additional_kwargs = {
-        -- To enable advanced reasoning, you must provide the correctly-shaped
-      -- 'reasoning' object here. The plugin will pass it directly to the API.
-      -- If you are using a non-reasoning model, simply remove the entire
-      -- 'reasoning' object from this table.
-      reasoning = {
-        effort = "high",
-        summary = "auto", -- Required to get reasoning summaries back.
-      },
-      -- You can still pass other standard parameters like temperature.
-      temperature = 1,
-    },
+    url     = "https://api.openai.com/v1/chat/completions",
+    api_key = "YOUR_API_KEY",
+    model   = "gpt-4",
+    max_completion_tokens  = 4096,
+    api_key_header         = "Authorization",
+    api_key_format         = "Bearer %s",
   },
 
   -- Chat UI settings

@@ -642,7 +642,7 @@ function chat.stream_ai_response(messages)
     chat.chat_state._timeout_timer = nil
   end
 
-  local timeout_duration_s = require("neoai.config").values.chat.thinking_timeout or 300
+  local timeout_duration_s = require("neoai.config").values.chat.thinking_timeout or 200
   local thinking_timeout_timer = vim.loop.new_timer()
   chat.chat_state._timeout_timer = thinking_timeout_timer
 

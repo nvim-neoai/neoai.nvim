@@ -1,6 +1,6 @@
 local Job = require("plenary.job")
 local conf = require("neoai.config").values.api
-local ai_tools = require("neoai.ai_tools")
+local tool_schemas = require("neoai.ai_tools").tool_schemas
 local api = {}
 
 -- Track current streaming job
@@ -24,265 +24,171 @@ end
 --- @param on_error fun(code: integer)
 --- @param on_cancel fun()|nil
 function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
-  -- This inner function manages a single request in the potential multi-step loop.
-  -- It can be called recursively to continue an agentic action.
-  local function _start_job(current_messages)
-    -- Prepare Responses API payload
-    local function to_responses_tools(schemas)
-      local out = {}
-      for _, sc in ipairs(schemas or {}) do
-        if sc and sc["function"] then
-          local fn = sc["function"]
-          table.insert(out, {
-            type = "function",
-            name = fn.name,
-            description = fn.description,
-            parameters = fn.parameters,
-          })
-        elseif sc and sc.type == "function" and sc.name then
-          table.insert(out, sc)
-        end
-      end
-      return #out > 0 and out or nil
-    end
+  -- Create a new job and mark it as not cancelled
 
-    local url = conf.url or "https://api.openai.com/v1/responses"
-    if type(url) == "string" and url:find("/chat/completions") then
-      url = url:gsub("/chat/completions", "/responses")
-    end
+  local basic_payload = {
+    model = conf.model,
+    max_completion_tokens = conf.max_completion_tokens,
+    stream = true,
+    messages = messages,
+    tools = tool_schemas,
+  }
 
-    local instructions = nil
-    local input_messages = {}
+  local payload = vim.fn.json_encode(merge_tables(basic_payload, conf.additional_kwargs or {}))
+  local api_key_header = conf.api_key_header or "Authorization"
+  local api_key_format = conf.api_key_format or "Bearer %s"
+  local api_key_value = string.format(api_key_format, conf.api_key)
+  local api_key = api_key_header .. ": " .. api_key_value
 
-    -- Separate instructions and filter out any previous encrypted content
-    -- to prevent duplication, as we will re-add the latest ones.
-    for _, msg in ipairs(current_messages) do
-      if msg.role == "system" then
-        instructions = msg.content
-      elseif msg.type ~= "reasoning.encrypted_content" then
-        table.insert(input_messages, msg)
-      end
-    end
+  current_job = Job:new({
+    command = "curl",
+    args = {
+      "--silent",
+      "--no-buffer",
+      "--location",
+      conf.url,
+      "--header",
+      "Content-Type: application/json",
+      "--header",
+      api_key,
+      "--data-binary",
+      "@-",
+    },
+    -- Send JSON payload via stdin to avoid hitting argv length limits
+    writer = payload,
+    on_stdout = function(_, line)
+      for _, data_line in ipairs(vim.split(line, "\n")) do
+        if vim.startswith(data_line, "data: ") then
+          local chunk = data_line:sub(7)
+          vim.schedule(function()
+            -- Some providers send a terminal sentinel line
+            if chunk == "[DONE]" then
+              on_complete()
+              return
+            end
 
-    -- Add any encrypted reasoning items from the previous step to the end of the input.
-    for _, item in ipairs(current_messages.next_reasoning_items or {}) do
-      table.insert(input_messages, item)
-    end
+            local ok, decoded = pcall(vim.fn.json_decode, chunk)
+            if not (ok and decoded) then
+              return
+            end
 
-    local basic_payload = {
-      model = conf.model,
-      stream = true,
-      instructions = instructions,
-      input = input_messages,
-      tools = to_responses_tools(ai_tools.tool_schemas),
-      store = false, -- Hardcoded to false for stateless operation
-    }
+            local handled = false
 
-    local ak = vim.deepcopy(conf.additional_kwargs or {})
-
-    if ak and ak.reasoning and type(ak.reasoning) == "table" then
-      basic_payload.include = { "reasoning.encrypted_content" }
-    end
-
-    if conf.max_completion_tokens then
-      basic_payload.max_output_tokens = conf.max_completion_tokens
-    end
-
-    if ak then
-      ak.store = nil
-    end
-
-    local payload = vim.fn.json_encode(merge_tables(basic_payload, ak))
-    local api_key_header = conf.api_key_header or "Authorization"
-    local api_key_format = conf.api_key_format or "Bearer %s"
-    local api_key_value = string.format(api_key_format, conf.api_key)
-    local api_key = api_key_header .. ": " .. api_key_value
-
-    local pending_calls = {}
-    local id_to_index = {}
-    local next_index = 0
-    -- This table will capture reasoning content to be passed to the *next* request.
-    local next_reasoning_items = {}
-
-    local function emit_tool_delta(call_id, name, delta, idx)
-      if not call_id then
-        return
-      end
-      local rec = pending_calls[call_id]
-      if not rec then
-        next_index = next_index + 1
-        idx = idx or next_index
-        rec = { id = call_id, index = idx, type = "function", ["function"] = { name = name or "", arguments = "" } }
-      else
-        idx = rec.index
-        rec["function"] = rec["function"] or { name = name or "", arguments = "" }
-        if name and name ~= "" then
-          rec["function"].name = name
-        end
-      end
-      if delta and delta ~= "" then
-        rec["function"].arguments = (rec["function"].arguments or "") .. delta
-      end
-      pending_calls[call_id] = rec
-      on_chunk({
-        type = "tool_calls",
-        data = {
-          {
-            index = rec.index,
-            id = rec.id,
-            type = "function",
-            ["function"] = { name = rec["function"].name, arguments = delta or "" },
-          },
-        },
-      })
-    end
-
-    local stderr_output = {}
-    current_job = Job:new({
-      command = "curl",
-      args = {
-        "--fail",
-        "--silent",
-        "--no-buffer",
-        "--location",
-        "--connect-timeout",
-        "15",
-        url,
-        "--header",
-        "Content-Type: application/json",
-        "--header",
-        api_key,
-        "--data-binary",
-        "@-",
-      },
-      writer = payload,
-      on_stdout = function(_, line)
-        for _, data_line in ipairs(vim.split(line, "\n")) do
-          if vim.startswith(data_line, "data: ") then
-            local chunk = data_line:sub(7)
-            vim.schedule(function()
-              if chunk == "[DONE]" then
-                return
+            -- Handler for OpenAI Responses API-style events
+            if decoded.type and type(decoded.type) == "string" then
+              local t = decoded.type
+              -- Reasoning deltas
+              if (t == "response.reasoning_text.delta" or t == "response.reasoning.delta") and decoded.delta then
+                on_chunk({ type = "reasoning", data = decoded.delta })
+                handled = true
+              elseif t == "response.reasoning_text.done" or t == "response.reasoning.done" then
+                -- Reasoning segment finished; no-op for now
+                handled = true
               end
-              local ok, decoded = pcall(vim.fn.json_decode, chunk)
-              if not (ok and decoded) then
-                return
+
+              -- Content deltas (different providers may use slightly different names)
+              if
+                t == "response.output_text.delta"
+                or t == "response.text.delta"
+                or t == "response.delta"
+                or t == "message.delta"
+                or t == "response.output.delta"
+              then
+                local text = decoded.delta or decoded.text
+                if text and text ~= "" then
+                  on_chunk({ type = "content", data = text })
+                end
+                handled = true
+              elseif t == "response.output_text.done" or t == "response.text.done" then
+                local text = decoded.text
+                if text and text ~= "" then
+                  on_chunk({ type = "content", data = text })
+                end
+                handled = true
+              elseif t == "response.completed" or t == "response.done" then
+                on_complete()
+                handled = true
               end
-              local handled = false
-              if decoded.type and type(decoded.type) == "string" then
-                local t = decoded.type
-                -- Capture the encrypted reasoning content for the next loop iteration.
-                if t == "reasoning.encrypted_content" and decoded.item then
-                  table.insert(next_reasoning_items, decoded.item)
-                  handled = true
+            end
+
+            if not handled then
+              -- Fallback handler for OpenAI Chat Completions-compatible streams
+              local choice = decoded.choices and decoded.choices[1]
+              if choice then
+                local delta = choice.delta or {}
+                local content = delta and delta.content
+                local tool_calls = delta and delta.tool_calls
+                local reasons = delta and delta.reasoning
+
+                -- Emit both reasoning and content if present in the same delta
+                if reasons and reasons ~= vim.NIL and reasons ~= "" then
+                  on_chunk({ type = "reasoning", data = reasons })
                 end
-                if (t == "response.reasoning_text.delta" or t == "response.reasoning.delta") and decoded.delta then
-                  on_chunk({ type = "reasoning", data = decoded.delta })
-                  handled = true
-                elseif t == "response.reasoning_text.done" or t == "response.reasoning.done" then
-                  handled = true
+                if content and content ~= vim.NIL and content ~= "" then
+                  on_chunk({ type = "content", data = content })
                 end
-                if
-                  t == "response.output_text.delta"
-                  or t == "response.text.delta"
-                  or t == "response.delta"
-                  or t == "message.delta"
-                  or t == "response.output.delta"
-                then
-                  local text = decoded.delta or decoded.text
-                  if text and text ~= "" then
-                    on_chunk({ type = "content", data = text })
-                  end
-                  handled = true
-                elseif t == "response.output_text.done" or t == "response.text.done" then
-                  handled = true
-                elseif t == "response.completed" or t == "response.done" then
-                  -- This event is now ignored here; the loop logic is handled in on_exit.
-                  handled = true
+                if tool_calls then
+                  on_chunk({ type = "tool_calls", data = tool_calls })
+                end
+
+                local finished_reason = choice.finish_reason
+                if finished_reason == "stop" or finished_reason == "tool_calls" then
+                  on_complete()
                 end
               end
-              if not handled and decoded.type and type(decoded.type) == "string" then
-                local t = decoded.type
-                if t:match("^response%.function_call") or t:match("^response%.tool_call") then
-                  local call_id = decoded.call_id or decoded.id or (decoded.item and decoded.item.id)
-                  local name = decoded.name or (decoded["function"] and decoded["function"].name)
-                  local idx = decoded.index or decoded.call_index
-                  if call_id and not id_to_index[call_id] and idx then
-                    id_to_index[call_id] = idx
-                  end
-                  local delta = decoded.delta or decoded.arguments_delta or decoded.arguments
-                  emit_tool_delta(call_id, name, delta, id_to_index[call_id])
-                  handled = true
-                end
-              end
-            end)
-          end
+            end
+          end)
         end
-      end,
-      on_stderr = function(_, line)
-        if line and line ~= "" then
-          table.insert(stderr_output, line)
-        end
-      end,
-      on_exit = function(j, exit_code)
-        vim.schedule(function()
-          if current_job ~= j then
-            return
-          end
+      end
+    end,
+    on_exit = function(j, exit_code)
+      vim.schedule(function()
+        -- Only act if this exiting job is still the active one
+        if current_job == j then
           current_job = nil
           if j._neoai_cancelled then
             if on_cancel then
               on_cancel()
             end
-          elseif exit_code == 0 then
-            -- THIS IS THE CORE LOOP LOGIC
-            if #next_reasoning_items > 0 then
-              -- If we received reasoning content, the agent has more steps.
-              -- Start the next request in the loop, passing the new reasoning items.
-              local new_messages = vim.deepcopy(current_messages)
-              new_messages.next_reasoning_items = next_reasoning_items
-              _start_job(new_messages)
-            else
-              -- If there's no more reasoning content, the agent's turn is truly over.
-              on_complete()
-            end
-          else
-            local error_message = "AI request failed with exit code: " .. tostring(exit_code)
-            if #stderr_output > 0 then
-              error_message = error_message .. "\n\nDetails from curl:\n" .. table.concat(stderr_output, "\n")
-            else
-              error_message = error_message .. "\n\n(No error message was captured from stderr.)"
-            end
-            vim.notify(error_message, vim.log.levels.ERROR, { title = "NeoAI Error" })
+          elseif exit_code ~= 0 then
             on_error(exit_code)
           end
-        end)
-      end,
-    })
-    current_job._neoai_cancelled = false
-    current_job:start()
-  end
+        end
+      end)
+    end,
+  })
 
-  -- Start the first request in the chain.
-  _start_job(messages)
+  -- Mark job as not cancelled initially
+  current_job._neoai_cancelled = false
+  current_job:start()
 end
 
+--- Cancel current streaming request (if any)
 function api.cancel()
   local job = current_job
   if not job then
     return
   end
+
+  -- Mark this specific job as cancelled
   job._neoai_cancelled = true
+
+  -- For curl SSE, closing pipes (shutdown) is not sufficient; send a signal.
+  -- Try SIGTERM first; if it doesn't exit quickly, escalate to SIGKILL.
   if type(job.kill) == "function" then
     pcall(function()
       job:kill(15) -- SIGTERM
     end)
   end
+
+  -- Close stdio to avoid dangling handles
   if type(job.shutdown) == "function" then
     pcall(function()
       job:shutdown()
     end)
   end
+
+  -- Safety net: if job is still alive shortly after, force kill
   vim.defer_fn(function()
     if current_job == job and type(job.kill) == "function" then
       pcall(function()
