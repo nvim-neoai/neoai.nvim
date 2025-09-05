@@ -157,7 +157,7 @@ end
 
 -- Apply rate limit delay before AI API calls
 local function apply_delay(callback)
-  local delay = require("neoai.config").values.api.api_call_delay or 0
+  local delay = require("neoai.config").get_api("main").api_call_delay or 0
   if delay <= 0 then
     callback()
   else

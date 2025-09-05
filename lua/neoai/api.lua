@@ -1,5 +1,5 @@
 local Job = require("plenary.job")
-local conf = require("neoai.config").values.api
+local conf = require("neoai.config").get_api("main")
 local tool_schemas = require("neoai.ai_tools").tool_schemas
 local api = {}
 

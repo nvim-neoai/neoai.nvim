@@ -6,8 +6,14 @@
 ---@field api_key string
 ---@field model string
 ---@field max_completion_tokens number|nil
-
+---@field api_key_header string|nil
+---@field api_key_format string|nil
+---@field api_call_delay number|nil
 ---@field additional_kwargs? table<string, any>
+
+---@class APISet
+---@field main APIConfig
+---@field small APIConfig
 
 ---@class KeymapConfig
 ---@field normal table<string, string>
@@ -24,9 +30,10 @@
 ---@field window WindowConfig
 ---@field auto_scroll boolean
 ---@field database_path string
+---@field thinking_timeout number|nil
 
 ---@class Config
----@field api APIConfig
+---@field api APISet
 ---@field chat ChatConfig
 ---@field keymaps KeymapConfig
 ---@field presets table<string, table>
@@ -53,14 +60,26 @@ config.defaults = {
     },
     session_picker = "default",
   },
-  -- API settings
+  -- API settings (two labelled models are required)
   api = {
-    url = "your-api-url-here",
-    api_key = os.getenv("AI_API_KEY") or "<your api key>", -- Support environment variables
-    api_key_header = "Authorization", -- Default header
-    api_key_format = "Bearer %s", -- Default format
-    model = "your-ai-model-here",
-    max_completion_tokens = 4096,
+    main = {
+      url = "your-api-url-here",
+      api_key = os.getenv("AI_API_KEY") or "<your api key>", -- Support environment variables
+      api_key_header = "Authorization", -- Default header
+      api_key_format = "Bearer %s", -- Default format
+      model = "your-main-model-here",
+      max_completion_tokens = 4096,
+      api_call_delay = 0,
+    },
+    small = {
+      url = "your-api-url-here",
+      api_key = os.getenv("AI_API_KEY") or "<your api key>",
+      api_key_header = "Authorization",
+      api_key_format = "Bearer %s",
+      model = "your-small-model-here",
+      max_completion_tokens = 4096,
+      api_call_delay = 0,
+    },
   },
 
   -- Chat UI settings
@@ -78,41 +97,74 @@ config.defaults = {
 
     -- Display settings:
     auto_scroll = true, -- Auto-scroll to bottom
+
+    -- Streaming/response handling
+    thinking_timeout = 200, -- seconds
   },
 
   presets = {
     groq = {
       api = {
-        url = "https://api.groq.com/openai/v1/chat/completions",
-        api_key = os.getenv("GROQ_API_KEY") or "<your api key>",
-        model = "deepseek-r1-distill-llama-70b",
+        main = {
+          url = "https://api.groq.com/openai/v1/chat/completions",
+          api_key = os.getenv("GROQ_API_KEY") or "<your api key>",
+          model = "deepseek-r1-distill-llama-70b",
+        },
+        small = {
+          url = "https://api.groq.com/openai/v1/chat/completions",
+          api_key = os.getenv("GROQ_API_KEY") or "<your api key>",
+          model = "llama-3.1-8b-instant", -- example small
+        },
       },
     },
 
     openai = {
       api = {
-        url = "https://api.openai.com/v1/chat/completions",
-        api_key = os.getenv("OPENAI_API_KEY") or "<your api key>",
-        model = "o4-mini",
+        main = {
+          url = "https://api.openai.com/v1/chat/completions",
+          api_key = os.getenv("OPENAI_API_KEY") or "<your api key>",
+          model = "gpt-4o",
+        },
+        small = {
+          url = "https://api.openai.com/v1/chat/completions",
+          api_key = os.getenv("OPENAI_API_KEY") or "<your api key>",
+          model = "gpt-4o-mini",
+        },
       },
     },
 
     anthropic = {
       api = {
-        url = "https://api.anthropic.com/v1/messages",
-        api_key = os.getenv("ANTHROPIC_API_KEY") or "<your api key>",
-        api_key_header = "x-api-key",
-        api_key_format = "%s",
-        model = "claude-3-sonnet-20240229",
+        main = {
+          url = "https://api.anthropic.com/v1/messages",
+          api_key = os.getenv("ANTHROPIC_API_KEY") or "<your api key>",
+          api_key_header = "x-api-key",
+          api_key_format = "%s",
+          model = "claude-3-5-sonnet-20241022",
+        },
+        small = {
+          url = "https://api.anthropic.com/v1/messages",
+          api_key = os.getenv("ANTHROPIC_API_KEY") or "<your api key>",
+          api_key_header = "x-api-key",
+          api_key_format = "%s",
+          model = "claude-3-5-haiku-20241022",
+        },
       },
     },
 
     -- Local models
     ollama = {
       api = {
-        url = "http://localhost:11434/v1/chat/completions",
-        api_key = "", -- No API key needed for local
-        model = "llama3.2",
+        main = {
+          url = "http://localhost:11434/v1/chat/completions",
+          api_key = "", -- No API key needed for local
+          model = "llama3.1:70b",
+        },
+        small = {
+          url = "http://localhost:11434/v1/chat/completions",
+          api_key = "",
+          model = "llama3.2:1b",
+        },
       },
     },
   },
@@ -157,15 +209,45 @@ function config.set_defaults(opts)
   -- Apply user options (these override preset values)
   config.values = vim.tbl_deep_extend("force", merged, clean_opts)
 
-  -- Validate API key
-  if config.values.api.api_key == "<your api key>" or config.values.api.api_key == "" then
-    vim.notify("NeoAI: Please set your API key in the configuration or environment variable", vim.log.levels.WARN)
+  -- Validation: require both labelled APIs
+  local apis = config.values.api or {}
+  local function missing(path)
+    vim.notify("NeoAI: Missing required config: " .. path, vim.log.levels.ERROR)
   end
 
-  -- Validate required fields
-  if not config.values.api.url or not config.values.api.model then
-    vim.notify("NeoAI: API URL and model are required", vim.log.levels.ERROR)
+  if type(apis) ~= "table" then
+    missing("api")
     return
+  end
+  if type(apis.main) ~= "table" then
+    missing("api.main")
+    return
+  end
+  if type(apis.small) ~= "table" then
+    missing("api.small")
+    return
+  end
+
+  -- Validate keys for both
+  for label, a in pairs({ main = apis.main, small = apis.small }) do
+    if a.api_key == "<your api key>" then
+      vim.notify(
+        "NeoAI: Please set your API key for api." .. label .. " or use environment variables",
+        vim.log.levels.WARN
+      )
+    end
+    if not a.url or a.url == "" then
+      missing("api." .. label .. ".url")
+      return
+    end
+    if not a.model or a.model == "" then
+      missing("api." .. label .. ".model")
+      return
+    end
+    a.api_key_header = a.api_key_header or "Authorization"
+    a.api_key_format = a.api_key_format or "Bearer %s"
+    a.max_completion_tokens = a.max_completion_tokens or 4096
+    a.api_call_delay = a.api_call_delay or 0
   end
 
   return config.values
@@ -179,6 +261,20 @@ end
 -- Helper function to get current config
 function config.get()
   return config.values
+end
+
+--- Get API config by label ("main" or "small"). Defaults to "main".
+---@param which string|nil
+---@return APIConfig
+function config.get_api(which)
+  which = which or "main"
+  local apis = (config.values and config.values.api) or {}
+  local conf = apis[which]
+  if not conf then
+    vim.notify("NeoAI: Unknown API label '" .. tostring(which) .. "'", vim.log.levels.ERROR)
+    return apis.main or {}
+  end
+  return conf
 end
 
 return config

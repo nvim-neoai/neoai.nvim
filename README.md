@@ -40,7 +40,10 @@ The assistant will favour TreeSitterQuery over Grep or LSP actions unless the us
   config = function()
     require("neoai").setup({
       preset = "openai",      -- or "groq", "anthropic", "ollama"
-      api = { api_key = "YOUR_API_KEY" },
+      api = {
+        main = { api_key = "YOUR_API_KEY" },
+        small = { api_key = "YOUR_API_KEY" },
+      },
     })
   end,
 }
@@ -55,7 +58,10 @@ use {
   config = function()
     require("neoai").setup({
       preset = "openai",
-      api = { api_key = "YOUR_API_KEY" },
+      api = {
+        main = { api_key = "YOUR_API_KEY" },
+        small = { api_key = "YOUR_API_KEY" },
+      },
     })
   end,
 }
@@ -66,6 +72,9 @@ use {
 - ripgrep (rg): required for the Grep tool.
 - nvim-treesitter: recommended for TreeSitterQuery; ensure language parsers are installed (e.g., `:TSInstall lua`).
 
+Note on models:
+- Both `api.main` and `api.small` must be configured (URLs, API keys, and model names).
+
 ## Configuration
 
 - Call `require('neoai').setup(opts)` with any of the following options:
@@ -75,14 +84,24 @@ require("neoai").setup({
   -- Select a built-in preset (openai, groq, anthropic, ollama) or omit for custom
   preset = "openai",
 
-  -- Override API settings if needed
+  -- Configure TWO labelled API profiles (required): main and small
   api = {
-    url     = "https://api.openai.com/v1/chat/completions",
-    api_key = "YOUR_API_KEY",
-    model   = "gpt-4",
-    max_completion_tokens  = 4096,
-    api_key_header         = "Authorization",
-    api_key_format         = "Bearer %s",
+    main = {
+      url     = "https://api.openai.com/v1/chat/completions",
+      api_key = "YOUR_API_KEY",
+      model   = "gpt-4",
+      max_completion_tokens  = 4096,
+      api_key_header         = "Authorization",
+      api_key_format         = "Bearer %s",
+    },
+    small = {
+      url     = "https://api.openai.com/v1/chat/completions",
+      api_key = "YOUR_API_KEY",
+      model   = "gpt-4o-mini",
+      max_completion_tokens  = 4096,
+      api_key_header         = "Authorization",
+      api_key_format         = "Bearer %s",
+    },
   },
 
   -- Chat UI settings
@@ -114,56 +133,31 @@ require("neoai").setup({
 })
 ```
 
-- Multiple models config
-  - api key are setup in `~/.config/nvim/lua/config/env.lua` (default neovim config location)
+- Multiple models config (required)
+  - You must configure two labelled models under `api`: `main` and `small`.
+  - Current behaviour: the plugin uses the `main` model internally. The `small` model is reserved for upcoming features.
 
 ```lua
-local openai_config = function()
-  local OPENAI_API_KEY = require("config.env").OPENAI_API_KEY
-  require("neoai").setup({
-    preset = "openai",
-    api = {
-      model = "o4-mini",
+local OPENAI_API_KEY = require("config.env").OPENAI_API_KEY
+require("neoai").setup({
+  preset = "openai",
+  api = {
+    main = {
       api_key = OPENAI_API_KEY,
-      max_completion_tokens = 4096 * 2,
-      additional_kwargs = {
-        reasoning_effort = "medium",
-      },
-    },
-    chat = {
-      database_path = vim.fn.stdpath("data") .. "/neoai.db",
-    },
-  })
-end
-
-local groq_config = function()
-  local GROQ_API_KEY = require("config.env").GROQ_API_KEY
-  require("neoai").setup({
-    preset = "groq",
-    api = {
-      model = "openai/gpt-oss-20b",
-      api_key = GROQ_API_KEY,
+      model = "gpt-4o",
       max_completion_tokens = 8192,
-      additional_kwargs = {
-        reasoning_effort = "medium",
-      },
+      additional_kwargs = { reasoning_effort = "medium" },
     },
-    chat = {
-      database_path = vim.fn.stdpath("data") .. "/neoai.db",
+    small = {
+      api_key = OPENAI_API_KEY,
+      model = "gpt-4o-mini",
+      max_completion_tokens = 4096,
     },
-  })
-end
-
-return {
-  {
-    "nvim-neoai/neoai.nvim",
-    dependencies = {
-      "nvim-lua/plenary.nvim",
-    },
-    config = openai_config,
   },
-}
-
+  chat = {
+    database_path = vim.fn.stdpath("data") .. "/neoai.db",
+  },
+})
 ```
 
 ## Persistent Storage Options
