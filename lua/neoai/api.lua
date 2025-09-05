@@ -1,6 +1,6 @@
 local Job = require("plenary.job")
 local conf = require("neoai.config").values.api
-local tool_schemas = require("neoai.ai_tools").tool_schemas
+local ai_tools = require("neoai.ai_tools")
 local api = {}
 
 -- Track current streaming job
@@ -26,19 +26,114 @@ end
 function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
   -- Create a new job and mark it as not cancelled
 
+  -- Prepare Responses API payload
+  local function to_responses_tools(schemas)
+    local out = {}
+    for _, sc in ipairs(schemas or {}) do
+      if sc and sc["function"] then
+        local fn = sc["function"]
+        table.insert(out, {
+          type = "function",
+          name = fn.name,
+          description = fn.description,
+          parameters = fn.parameters,
+        })
+      elseif sc and sc.type == "function" and sc.name then
+        table.insert(out, sc)
+      end
+    end
+    return out
+  end
+
+  local function to_responses_input(msgs)
+    local input = {}
+    for _, m in ipairs(msgs or {}) do
+      local item = { role = m.role, content = m.content }
+      if m.role == "tool" and m.tool_call_id then
+        item.tool_call_id = m.tool_call_id
+      end
+      table.insert(input, item)
+    end
+    return input
+  end
+
+  local url = conf.url or "https://api.openai.com/v1/responses"
+  if type(url) == "string" and url:find("/chat/completions") then
+    url = url:gsub("/chat/completions", "/responses")
+  end
+
   local basic_payload = {
     model = conf.model,
-    max_completion_tokens = conf.max_completion_tokens,
     stream = true,
-    messages = messages,
-    tools = tool_schemas,
+    input = to_responses_input(messages),
+    tools = to_responses_tools(ai_tools.tool_schemas),
+    store = false, -- Always prevent server-side storage
   }
 
-  local payload = vim.fn.json_encode(merge_tables(basic_payload, conf.additional_kwargs or {}))
+  if conf.max_completion_tokens ~= nil then
+    basic_payload.max_output_tokens = conf.max_completion_tokens
+  end
+
+  -- Ensure callers cannot override store behaviour
+  local ak = vim.deepcopy(conf.additional_kwargs or {})
+  if ak and ak.store ~= nil then
+    ak.store = nil
+  end
+
+  local payload = vim.fn.json_encode(merge_tables(basic_payload, ak))
   local api_key_header = conf.api_key_header or "Authorization"
   local api_key_format = conf.api_key_format or "Bearer %s"
   local api_key_value = string.format(api_key_format, conf.api_key)
   local api_key = api_key_header .. ": " .. api_key_value
+
+  -- Track in-flight function calls for Responses streaming
+  local pending_calls = {}
+  local id_to_index = {}
+  local next_index = 0
+
+  local function emit_tool_delta(call_id, name, delta, idx)
+    if not call_id then
+      return
+    end
+    local rec = pending_calls[call_id]
+    if not rec then
+      next_index = next_index + 1
+      idx = idx or next_index
+      rec = {
+        id = call_id,
+        index = idx,
+        type = "function",
+        ["function"] = { name = name or "", arguments = "" },
+      }
+    else
+      idx = rec.index
+      rec["function"] = rec["function"] or { name = name or "", arguments = "" }
+      if name and name ~= "" then
+        rec["function"].name = name
+      end
+    end
+
+    if delta and delta ~= "" then
+      rec["function"].arguments = (rec["function"].arguments or "") .. delta
+    end
+
+    pending_calls[call_id] = rec
+
+    on_chunk({
+      type = "tool_calls",
+      data = {
+        {
+          index = rec.index,
+          id = rec.id,
+          type = "function",
+          ["function"] = {
+            name = rec["function"].name,
+            arguments = delta or "",
+          },
+        },
+      },
+    })
+  end
 
   current_job = Job:new({
     command = "curl",
@@ -46,7 +141,7 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
       "--silent",
       "--no-buffer",
       "--location",
-      conf.url,
+      url,
       "--header",
       "Content-Type: application/json",
       "--header",
@@ -111,30 +206,19 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
               end
             end
 
-            if not handled then
-              -- Fallback handler for OpenAI Chat Completions-compatible streams
-              local choice = decoded.choices and decoded.choices[1]
-              if choice then
-                local delta = choice.delta or {}
-                local content = delta and delta.content
-                local tool_calls = delta and delta.tool_calls
-                local reasons = delta and delta.reasoning
-
-                -- Emit both reasoning and content if present in the same delta
-                if reasons and reasons ~= vim.NIL and reasons ~= "" then
-                  on_chunk({ type = "reasoning", data = reasons })
+            if not handled and decoded.type and type(decoded.type) == "string" then
+              local t = decoded.type
+              -- Function/tool call argument streaming (Responses API)
+              if t:match("^response%.function_call") or t:match("^response%.tool_call") then
+                local call_id = decoded.call_id or decoded.id or (decoded.item and decoded.item.id)
+                local name = decoded.name or (decoded["function"] and decoded["function"].name)
+                local idx = decoded.index or decoded.call_index
+                if call_id and not id_to_index[call_id] and idx then
+                  id_to_index[call_id] = idx
                 end
-                if content and content ~= vim.NIL and content ~= "" then
-                  on_chunk({ type = "content", data = content })
-                end
-                if tool_calls then
-                  on_chunk({ type = "tool_calls", data = tool_calls })
-                end
-
-                local finished_reason = choice.finish_reason
-                if finished_reason == "stop" or finished_reason == "tool_calls" then
-                  on_complete()
-                end
+                local delta = decoded.delta or decoded.arguments_delta or decoded.arguments
+                emit_tool_delta(call_id, name, delta, id_to_index[call_id])
+                handled = true
               end
             end
           end)

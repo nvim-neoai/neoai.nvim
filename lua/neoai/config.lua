@@ -67,7 +67,7 @@ config.defaults = {
   chat = {
     window = {
       width = 80, -- Chat window column width
-      height_ratio = 0.8, -- 80% of column height for chat window
+      height_ratio = 0.9, -- 80% of column height for chat window
       min_input_lines = 3, -- Ensure input has at least a few lines
     },
 
@@ -83,7 +83,7 @@ config.defaults = {
   presets = {
     groq = {
       api = {
-        url = "https://api.groq.com/openai/v1/chat/completions",
+        url = "https://api.groq.com/openai/v1/responses",
         api_key = os.getenv("GROQ_API_KEY") or "<your api key>",
         model = "deepseek-r1-distill-llama-70b",
       },
@@ -91,7 +91,7 @@ config.defaults = {
 
     openai = {
       api = {
-        url = "https://api.openai.com/v1/chat/completions",
+        url = "https://api.openai.com/v1/responses",
         api_key = os.getenv("OPENAI_API_KEY") or "<your api key>",
         model = "o4-mini",
       },
@@ -99,7 +99,7 @@ config.defaults = {
 
     anthropic = {
       api = {
-        url = "https://api.anthropic.com/v1/messages",
+        url = "https://api.anthropic.com/v1/responses",
         api_key = os.getenv("ANTHROPIC_API_KEY") or "<your api key>",
         api_key_header = "x-api-key",
         api_key_format = "%s",
@@ -110,7 +110,7 @@ config.defaults = {
     -- Local models
     ollama = {
       api = {
-        url = "http://localhost:11434/v1/chat/completions",
+        url = "http://localhost:11434/v1/responses",
         api_key = "", -- No API key needed for local
         model = "llama3.2",
       },
