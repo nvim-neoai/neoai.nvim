@@ -5,6 +5,37 @@ local utils = require("neoai.ai_tools.utils")
 -- State to hold original content of the buffer being edited.
 local active_edit_state = {}
 
+--[[
+  UTILITY FUNCTIONS
+  Moved to the top of the file to be available for all subsequent functions.
+--]]
+
+local function split_lines(str)
+  -- Use vim.split for consistency with Neovim's line handling.
+  return vim.split(str, "\n", { plain = true })
+end
+
+local function normalise_eol(s)
+  -- Ensure all line endings are just '\n' for consistent processing.
+  return (s or ""):gsub("\r\n", "\n"):gsub("\r", "")
+end
+
+-- Normalise Windows line endings in-place (strip trailing \r)
+local function strip_cr(lines)
+  for i = 1, #lines do
+    lines[i] = lines[i]:gsub("\r$", "")
+  end
+end
+
+-- Create a unified diff text using Neovim's builtin diff
+local function unified_diff(old_lines, new_lines)
+  local old_str = table.concat(old_lines or {}, "\n")
+  local new_str = table.concat(new_lines or {}, "\n")
+  ---@diagnostic disable-next-line: missing-fields
+  local diff = vim.diff(old_str, new_str, { result_type = "unified", algorithm = "histogram" })
+  return diff or "(no changes)"
+end
+
 -- This function is called from chat.lua to close an open diffview window.
 -- CORRECTED: Now fully reverts buffer content to its original state.
 function M.discard_all_diffs()
@@ -85,53 +116,60 @@ local function validate_edit(edit, index)
   return nil
 end
 
-local function split_lines(str)
-  return vim.split(str, "\n", { plain = true })
-end
-
--- Normalise Windows line endings in-place (strip trailing \r)
-local function strip_cr(lines)
-  for i = 1, #lines do
-    lines[i] = lines[i]:gsub("\r$", "")
-  end
-end
-
--- Introduce a structure for holding search and replace blocks
-local function parse_search_replace_blocks(edits)
-  local blocks = {}
-
-  for _, edit in ipairs(edits) do
-    local old_block = split_lines(normalise_eol(edit.old_string))
-    local new_block = split_lines(normalise_eol(edit.new_string))
-
-    -- Consider each block as a transactional segment
-    table.insert(blocks, {
-      old_lines = old_block,
-      new_lines = new_block,
-      scope_line_start = edit.start_line,
-      scope_line_end = edit.end_line,
-    })
-  end
-
-  return blocks
-end
-
--- Modify the find block location to utilise block boundaries
-local function find_block_location(buffer_lines, block, start_hint, end_hint)
+-- Enhanced function to find the location of a block in buffer_lines with fuzzy matching
+local function find_fuzzy_block_location(buffer_lines, block, start_hint, end_hint)
   local old_lines = block.old_lines
 
-  -- Try to find an exact match within the given buffer lines
-  local function find_exact_match(search_lines, starting_idx, ending_idx)
-    for idx = starting_idx, (ending_idx - #search_lines + 1) do
-      local match_found = true
-      for j = 1, #search_lines do
-        -- Match line-by-line, consider whitespace and indentation
-        if buffer_lines[idx + j - 1]:match("^%s*(.-)%s*$") ~= search_lines[j]:match("^%s*(.-)%s*$") then
-          match_found = false
-          break
+  -- Helper function to calculate a simple similarity score between two strings
+  local function similarity_score(str1, str2)
+    str1, str2 = str1:gsub("%s+", ""), str2:gsub("%s+", "") -- Ignore spaces for similarity
+    if #str1 < #str2 then
+      str1, str2 = str2, str1
+    end -- Ensure str1 is longer
+
+    -- Calculate Levenshtein distance
+    local costs = {}
+    for i = 0, #str1 do
+      costs[i] = i
+    end
+    for j = 0, #str2 do
+      local last_value = j
+      for i = 0, #str1 do
+        if i == 0 then
+          costs[i] = j
+        else
+          local new_value = costs[i - 1]
+          if str1:sub(i, i) ~= str2:sub(j, j) then
+            new_value = math.min(math.min(new_value, last_value), costs[i]) + 1
+          end
+          costs[i - 1] = last_value
+          last_value = new_value
         end
       end
-      if match_found then
+      if j > 0 then
+        costs[#str1] = last_value
+      end
+    end
+    return costs[#str1]
+  end
+
+  local function find_fuzzy_match(search_lines, starting_idx, ending_idx)
+    for idx = starting_idx, (ending_idx - #search_lines + 1) do
+      local total_difference = 0
+      local match_threshold = 2 -- Allow up to a small number of differences per line
+
+      for j = 1, #search_lines do
+        local diff =
+          similarity_score(buffer_lines[idx + j - 1]:match("^%s*(.-)%s*$"), search_lines[j]:match("^%s*(.-)%s*$"))
+        if diff > match_threshold then
+          total_difference = total_difference + 1
+          if total_difference > match_threshold then
+            break
+          end
+        end
+      end
+
+      if total_difference <= match_threshold then
         return idx, idx + #search_lines - 1
       end
     end
@@ -139,76 +177,14 @@ local function find_block_location(buffer_lines, block, start_hint, end_hint)
     return nil, nil
   end
 
-  -- Use the updated matching strategy considering the block's defined range
   if start_hint ~= nil then
-    local start_idx, end_idx = find_exact_match(old_lines, start_hint, end_hint or #buffer_lines)
-    if start_idx ~= nil then
+    local start_idx, end_idx = find_fuzzy_match(old_lines, start_hint, end_hint or #buffer_lines)
+    if start_idx then
       return start_idx, end_idx
     end
   end
 
-  -- If hinted range fails, check the whole file
-  local start_idx, end_idx = find_exact_match(old_lines, 1, #buffer_lines)
-  return start_idx, end_idx
-end
-
-local function normalise_eol(s)
-  return (s or ""):gsub("\r\n", "\n"):gsub("\r", "")
-end
-
--- Create a unified diff text using Neovim's builtin diff
-local function unified_diff(old_lines, new_lines)
-  local old_str = table.concat(old_lines or {}, "\n")
-  local new_str = table.concat(new_lines or {}, "\n")
-  ---@diagnostic disable-next-line: missing-fields
-  local diff = vim.diff(old_str, new_str, { result_type = "unified", algorithm = "histogram" })
-  return diff or "(no changes)"
-end
-
--- Finds the location of a block of search_lines within buffer_lines.
--- @param buffer_lines table: The lines of the entire file.
--- @param search_lines table: The lines of the block to search for.
--- @param start_hint integer|nil: The suggested start line for the search.
--- @param end_hint integer|nil: The suggested end line for the search.
--- @return integer|nil, integer|nil: The start and end lines of the match, or nil, nil.
-local function find_block_location(buffer_lines, search_lines, start_hint, end_hint)
-  if #search_lines == 0 then
-    return nil, nil
-  end
-
-  local function find_match(lines_to_search, start_idx, end_idx)
-    for i = start_idx, end_idx - #search_lines + 1 do
-      local is_match = true
-      for j = 1, #search_lines do
-        -- Use a whitespace-insensitive comparison for robustness
-        if lines_to_search[i + j - 1]:match("^%s*(.-)%s*$") ~= search_lines[j]:match("^%s*(.-)%s*$") then
-          is_match = false
-          break
-        end
-      end
-      if is_match then
-        return i, i + #search_lines - 1
-      end
-    end
-    return nil, nil
-  end
-
-  -- 1. Try searching within the hinted range first.
-  if start_hint then
-    local s, e = find_match(buffer_lines, start_hint, end_hint or #buffer_lines)
-    if s then
-      return s, e
-    end
-  end
-
-  -- 2. If that fails or no hint was given, search the entire file.
-  local s, e = find_match(buffer_lines, 1, #buffer_lines)
-  if s then
-    return s, e
-  end
-
-  -- 3. If all else fails, return nil.
-  return nil, nil
+  return find_fuzzy_match(old_lines, 1, #buffer_lines)
 end
 
 -- CORRECTED: Now saves the original buffer state before applying the diff.
@@ -269,17 +245,23 @@ M.run = function(args)
   -- Prepare original and working lines (strip CR to avoid Windows EOL mismatch)
   local orig_lines = split_lines(content)
   strip_cr(orig_lines)
-  local working_content = table.concat(orig_lines, "\n")
 
-  local total_replacements = 0
+  --[[
+    REMOVED: This entire block was buggy and redundant.
+    1. It unsafely modified the `planned_edits` table while iterating over it.
+    2. It was immediately discarded by `local planned_edits = {}` on the next line.
+    The correct logic is handled by the loop that follows.
+  --]]
 
-  -- Plan the edits:
   local planned_edits = {}
   for i, edit in ipairs(edits) do
     local old_lines = split_lines(normalise_eol(edit.old_string))
     strip_cr(old_lines)
 
-    local start_line, end_line = find_block_location(orig_lines, old_lines, edit.start_line, edit.end_line)
+    local start_line, end_line = find_fuzzy_block_location(orig_lines, {
+      old_lines = old_lines,
+      new_lines = {}, -- Placeholder for new lines
+    }, edit.start_line, edit.end_line)
 
     if not start_line then
       return string.format(
@@ -298,7 +280,7 @@ M.run = function(args)
     })
   end
 
-  -- Apply edits in reverse order:
+  -- Apply edits in reverse order to avoid line number shifts
   table.sort(planned_edits, function(a, b)
     return a.start_line > b.start_line
   end)
@@ -307,8 +289,15 @@ M.run = function(args)
   local total_replacements = 0
 
   for _, planned_edit in ipairs(planned_edits) do
-    -- Replace the lines for the matched block
-    table.remove(working_lines, planned_edit.start_line, planned_edit.end_line - planned_edit.start_line + 1)
+    -- CORRECTED: Replace the lines for the matched block.
+    -- The standard `table.remove` only accepts a single position, so we must
+    -- loop to remove a range of lines.
+    local num_to_remove = planned_edit.end_line - planned_edit.start_line + 1
+    for _ = 1, num_to_remove do
+      table.remove(working_lines, planned_edit.start_line)
+    end
+
+    -- Insert the new lines at the now-empty position.
     for i, line in ipairs(planned_edit.new_lines) do
       table.insert(working_lines, planned_edit.start_line - 1 + i, line)
     end
