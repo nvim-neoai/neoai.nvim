@@ -30,8 +30,8 @@ function M.discard_all_diffs()
 end
 
 M.meta = {
-  name = "MultiEdit",
-  description = utils.read_description("multi_edit"),
+  name = "Edit",
+  description = utils.read_description("edit"),
   parameters = {
     type = "object",
     properties = {

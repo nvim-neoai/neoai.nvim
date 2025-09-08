@@ -8,7 +8,7 @@ local tool_names = {
   "project_structure",
   "read",
   "treesitter_query",
-  "multi_edit",
+  "edit",
   "grep",
   "lsp_diagnostic",
   "lsp_code_action",

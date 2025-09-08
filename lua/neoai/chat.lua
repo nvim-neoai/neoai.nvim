@@ -1,6 +1,6 @@
 local chat = {}
 
-local multi_edit = require("neoai.ai_tools.multi_edit")
+local edit = require("neoai.ai_tools.edit")
 
 -- Ensure that the discard_all_diffs function is accessible
 local ai_tools = require("neoai.ai_tools")
@@ -401,7 +401,7 @@ function chat.send_message()
 
     -- Clean up the listener and revert the buffer.
     pcall(vim.api.nvim_del_augroup_by_name, "NeoAIInlineDiffAwait")
-    multi_edit.discard_all_diffs()
+    edit.discard_all_diffs()
 
     -- Reset state flags.
     vim.g.neoai_inline_diff_active = false
