@@ -1,4 +1,5 @@
 local function read_lines(filepath)
+  --- @return table|nil, string|nil: A table of lines from the file or nil and an error message
   local lines = {}
   local file = io.open(filepath, "r")
   if not file then
@@ -11,6 +12,8 @@ local function read_lines(filepath)
   return lines
 end
 
+--- @param path1 string: The path to the first file
+--- @param path2 string: The path to the second file
 local function diff_files(path1, path2)
   if vim.fn.executable("git") == 1 then
     local args = { "git", "diff", "--no-index", "--color=always", path1, path2 }
