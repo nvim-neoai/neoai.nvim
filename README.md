@@ -69,7 +69,7 @@ use {
 
 ### Optional dependencies
 
-- ripgrep (rg): required for the Grep tool.
+- ripgrep (rg): required for the Grep and Project Structure tools.
 - nvim-treesitter: recommended for TreeSitterQuery; ensure language parsers are installed (e.g., `:TSInstall lua`).
 
 Note on models:
