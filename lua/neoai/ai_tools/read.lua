@@ -1,3 +1,7 @@
+--- @class Reader
+--- @field file_path string: The path of the file to read (relative to the current working directory)
+--- @field start_line number|nil: Line number to start reading the content (default: 1)
+--- @field end_line number|nil: Line number to stop reading the content (default: end of file)
 local M = {}
 
 local utils = require("neoai.ai_tools.utils")
@@ -31,6 +35,9 @@ M.meta = {
   },
 }
 
+--- Executes the reading operation based on provided arguments.
+--- @param args Reader: Arguments for the reading process
+--- @return table<string, string>: The content and status display information
 M.run = function(args)
   local pwd = vim.fn.getcwd()
   local path = pwd .. "/" .. args.file_path
@@ -55,7 +62,9 @@ M.run = function(args)
     current_line = current_line + 1
   end
   file:close()
-
+  --- Extracts the file extension from the given filename.
+  --- @param filename string: The name of the file
+  --- @return string: The file extension
   local function get_extension(filename)
     return filename:match("^.+%.([a-zA-Z0-9_]+)$") or ""
   end
@@ -67,7 +76,13 @@ M.run = function(args)
   -- Append LSP diagnostics
   local diag = require("neoai.ai_tools.lsp_diagnostic").run({ file_path = args.file_path })
   local content = result .. "\n" .. diag
-  local display = string.format("Read: %s (%s:%s-%s)", args.file_path, ext ~= "" and ext or "txt", tostring(start_line), tostring(end_line == math.huge and "EOF" or end_line))
+  local display = string.format(
+    "Read: %s (%s:%s-%s)",
+    args.file_path,
+    ext ~= "" and ext or "txt",
+    tostring(start_line),
+    tostring(end_line == math.huge and "EOF" or end_line)
+  )
   return { content = content, display = display }
 end
 

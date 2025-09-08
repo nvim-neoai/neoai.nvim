@@ -67,10 +67,10 @@ use {
 }
 ```
 
-### Optional dependencies
+### Required dependencies
 
 - ripgrep (rg): required for the Grep and Project Structure tools.
-- nvim-treesitter: recommended for TreeSitterQuery; ensure language parsers are installed (e.g., `:TSInstall lua`).
+- nvim-treesitter: For TreeSitterQuery and edit tool; ensure language parsers are installed (e.g., `:TSInstall lua`).
 
 Note on models:
 - Both `api.main` and `api.small` must be configured (URLs, API keys, and model names).

@@ -1,4 +1,4 @@
---- Function to find the location of a block in buffer_lines using Tree-sitter for precise syntax matching
+--- Function to find the location of a block in buffer_lines using a robust, multi-stage approach.
 
 local utils = require("neoai.ai_tools.utils")
 
@@ -9,7 +9,6 @@ local active_edit_state = {}
 
 --[[
   UTILITY FUNCTIONS
-  Moved to the top of the file to be available for all subsequent functions.
 --]]
 
 --- Split a string into lines.
@@ -132,53 +131,105 @@ local function validate_edit(edit, index)
   return nil
 end
 
---- Find a block of code using Tree-sitter.
----@param bufnr integer: The buffer number.
----@param block_lines_to_find table: A table of lines representing the block.
----@param start_hint integer|nil: The starting line hint.
----@param end_hint integer|nil: The ending line hint.
----@return integer|nil, integer|nil: The start and end line numbers if found, or nil, nil if not found.
-local function find_block_with_treesitter(bufnr, block_lines_to_find, start_hint, end_hint)
-  local ft = vim.bo[bufnr] and vim.bo[bufnr].filetype
-  if not ft then
-    return nil, nil
+--- Normalises a block of code for fuzzy matching.
+--- Removes comments and collapses whitespace.
+---@param lines table A table of strings representing the code block.
+---@return string The normalised code string.
+local function normalise_code_block(lines)
+  if not lines or #lines == 0 then
+    return ""
   end
 
-  pcall(vim.treesitter.start, bufnr, ft)
-  local parser = vim.treesitter.get_parser(bufnr, ft)
-  if not parser then
-    return nil, nil
+  local content = table.concat(lines, "\n")
+
+  -- Remove block comments (non-greedy)
+  content = content:gsub("/%*.-%*/", "")
+  content = content:gsub("<!--.- -->", "") -- HTML/XML
+  content = content:gsub("%-%-%[%[.-%]%]", "") -- Lua
+
+  -- Remove single-line comments
+  content = content:gsub("//[^\n]*", "")
+  content = content:gsub("#[^\n]*", "")
+  content = content:gsub("%-%-[^\n]*", "")
+
+  -- Normalise whitespace (newlines, tabs, multiple spaces) to a single space
+  content = content:gsub("%s+", " ")
+
+  -- Trim leading/trailing whitespace
+  return content:gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+--- Finds the location of a code block, trying exact match first, then a fuzzy match.
+--- This function is more tolerant of whitespace and comment differences than a simple string search.
+---@param buffer_lines table The lines of the entire buffer.
+---@param block_lines_to_find table The lines of the block to find.
+---@param start_hint integer|nil The line to start searching from (1-based).
+---@param end_hint integer|nil The line to end searching at (1-based).
+---@return integer|nil, integer|nil The start and end line numbers of the match, or nil.
+local function find_block_location(buffer_lines, block_lines_to_find, start_hint, end_hint)
+  if #block_lines_to_find == 0 then
+    return nil, nil -- Empty blocks are handled as a special case in M.run
   end
 
-  local tree = parser:parse()[1]
-  if not tree then
-    return nil, nil
-  end
-  local root = tree:root()
+  -- Attempt 1: Exact match. This is fast and reliable if the AI is accurate.
+  do
+    local start_search = start_hint or 1
+    local end_search = end_hint or #buffer_lines
+    -- Ensure search is within bounds
+    end_search = math.min(end_search, #buffer_lines - #block_lines_to_find + 1)
 
-  local query_str = "(_) @match"
-  local query = vim.treesitter.query.parse(ft, query_str)
-  if not query then
-    return nil, nil
-  end
-
-  local text_to_find = table.concat(block_lines_to_find, "\n")
-  if text_to_find == "" then
-    return nil, nil
-  end
-
-  for id, node in query:iter_captures(root, bufnr, start_hint and start_hint - 1 or 0, end_hint or -1) do
-    if query.captures[id] == "match" then
-      local start_row, _, end_row, _ = node:range()
-      local node_lines = vim.api.nvim_buf_get_lines(bufnr, start_row, end_row + 1, false)
-      local node_text = table.concat(node_lines, "\n")
-
-      if node_text == text_to_find then
-        return start_row + 1, end_row + 1
+    for i = start_search, end_search do
+      local match = true
+      for j = 1, #block_lines_to_find do
+        if buffer_lines[i + j - 1] ~= block_lines_to_find[j] then
+          match = false
+          break
+        end
+      end
+      if match then
+        return i, i + #block_lines_to_find - 1
       end
     end
   end
 
+  -- Attempt 2: Fuzzy match. Normalises code to ignore whitespace and comments.
+  do
+    local normalised_target = normalise_code_block(block_lines_to_find)
+    if normalised_target == "" then
+      return nil, nil -- Cannot match an empty or comment-only block
+    end
+
+    local start_search = start_hint or 1
+    local end_search = end_hint or #buffer_lines
+
+    -- The window size can vary slightly if the AI missed/added comments or blank lines.
+    -- We define a tolerance for how much the line count can differ.
+    local line_count_tolerance = 5
+    local min_scan_lines = math.max(1, #block_lines_to_find - line_count_tolerance)
+    local max_scan_lines = #block_lines_to_find + line_count_tolerance
+
+    for i = start_search, end_search do
+      for L = min_scan_lines, max_scan_lines do
+        if i + L - 1 > #buffer_lines then
+          break
+        end
+
+        local window_lines = {}
+        for k = i, i + L - 1 do
+          table.insert(window_lines, buffer_lines[k])
+        end
+
+        local normalised_window = normalise_code_block(window_lines)
+
+        if normalised_window == normalised_target then
+          -- We found a match. The correct block size is `L` lines.
+          return i, i + L - 1
+        end
+      end
+    end
+  end
+
+  -- If we are here, both attempts failed.
   return nil, nil
 end
 
@@ -239,34 +290,23 @@ M.run = function(args)
   local orig_lines = split_lines(content)
   strip_cr(orig_lines)
 
-  local bufnr
-  if bufnr_from_list then
-    bufnr = bufnr_from_list
-  else
-    -- Create a temporary buffer for parsing.
-    bufnr = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_name(bufnr, abs_path)
-    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, orig_lines)
-    vim.api.nvim_buf_set_option(bufnr, "modified", false)
-  end
-
-  -- Trigger autocommands to ensure filetype detection for Tree-sitter.
-  vim.cmd("silent doautocmd BufRead " .. vim.api.nvim_buf_get_name(bufnr))
-
   local planned_edits = {}
   for i, edit in ipairs(edits) do
     local old_lines = split_lines(normalise_eol(edit.old_string))
     strip_cr(old_lines)
 
-    local start_line, end_line = find_block_with_treesitter(bufnr, old_lines, edit.start_line, edit.end_line)
+    local start_line, end_line
+    if #old_lines == 0 then
+      -- Per description: "empty string means insert at beginning of file"
+      start_line = 1
+      end_line = 0 -- This means we replace 0 lines before line 1.
+    else
+      start_line, end_line = find_block_location(orig_lines, old_lines, edit.start_line, edit.end_line)
+    end
 
     if not start_line then
-      -- Clean up the temporary buffer if we created one before returning the error.
-      if not bufnr_from_list then
-        vim.api.nvim_buf_delete(bufnr, { force = true })
-      end
       return string.format(
-        "Edit %d: Could not find a matching block for 'old_string'. The code may have changed or the string is inaccurate.",
+        "Edit %d: Could not find a matching block for 'old_string'. The code may have changed or the string is inaccurate. Fuzzy matching was attempted.",
         i
       )
     end
@@ -281,11 +321,6 @@ M.run = function(args)
     })
   end
 
-  -- If we created a temporary buffer, clean it up now that we're done with it.
-  if not bufnr_from_list then
-    vim.api.nvim_buf_delete(bufnr, { force = true })
-  end
-
   table.sort(planned_edits, function(a, b)
     return a.start_line > b.start_line
   end)
@@ -295,6 +330,11 @@ M.run = function(args)
 
   for _, planned_edit in ipairs(planned_edits) do
     local num_to_remove = planned_edit.end_line - planned_edit.start_line + 1
+    -- Handle insertion case where end_line < start_line
+    if num_to_remove < 0 then
+      num_to_remove = 0
+    end
+
     for _ = 1, num_to_remove do
       table.remove(working_lines, planned_edit.start_line)
     end

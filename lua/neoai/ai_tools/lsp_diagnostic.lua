@@ -31,10 +31,13 @@ local severity_map = {
   [vim.diagnostic.severity.HINT] = "Hint",
 }
 
+--- Runs the LSP diagnostic tool.
+-- @param args table: {file_path: string, include_code_actions: boolean}
+-- @return string: The diagnostics report, formatted as text.
 M.run = function(args)
   args = args or {}
   -- Determine buffer number
-  local bufnr
+  local bufnr ---@type number
   if type(args.file_path) == "string" and #args.file_path > 0 then
     -- Load or get existing buffer
     bufnr = vim.fn.bufnr(args.file_path, true)
@@ -49,13 +52,14 @@ M.run = function(args)
   end
 
   -- Get all diagnostics for this buffer
-  local diags = vim.diagnostic.get(bufnr)
+  local diags ---@type table
+  diags = vim.diagnostic.get(bufnr)
   if vim.tbl_isempty(diags) then
     return "✅ No diagnostics for: " .. (args.file_path or bufnr)
   end
 
   -- Format each diagnostic
-  local lines = {}
+  local lines = {} ---@type string[]
   for _, d in ipairs(diags) do
     local line = d.lnum + 1
     local col = d.col + 1
@@ -75,9 +79,9 @@ M.run = function(args)
     )
   end
 
-  local text = table.concat(lines, "\n")
+  local text = table.concat(lines, "\n") ---@type string
   -- Base diagnostics output
-  local result = utils.make_code_block(text, "txt")
+  local result = utils.make_code_block(text, "txt") ---@type string
   -- Append code actions if requested
   if args.include_code_actions then
     local code_action_tool = require("neoai.ai_tools.lsp_code_action")

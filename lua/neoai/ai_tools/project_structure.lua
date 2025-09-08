@@ -1,10 +1,11 @@
-local M = {}
+local M = {} -- Type: table
 
 local utils = require("neoai.ai_tools.utils")
 
 M.meta = {
   name = "ProjectStructure",
-  description = utils.read_description("project_structure"),
+  description = utils.read_description("project_structure"), -- Type: string
+
   parameters = {
     type = "object",
     properties = {
@@ -21,13 +22,16 @@ M.meta = {
     additionalProperties = false,
   },
 }
+--- Runs the project structure listing
+-- @param args table { path: string, max_depth: number }
+-- @return string
+M.run = function(args) -- Type: function
+  local path = args.path or "." -- Type: string
 
-M.run = function(args)
-  local path = args.path or "."
-  local max_depth = args.max_depth
+  local max_depth = args.max_depth -- Type: number or nil
 
   -- Build the ripgrep command
-  local cmd = { "rg", "--files" }
+  local cmd = { "rg", "--files" } -- Type: table
 
   if max_depth then
     table.insert(cmd, "--max-depth")
@@ -47,20 +51,20 @@ M.run = function(args)
 
   -- rg exits 2 on error, 1 for no matches (which is not an error for us)
   if result.code > 1 then
-    return "Error running `rg`: " .. (result.stderr or "Unknown error")
+    return "Error running `rg`: " .. (result.stderr or "Unknown error") -- Type: string
   end
 
-  local files = vim.split(result.stdout, "\n", { trimempty = true })
+  local files = vim.split(result.stdout, "\n", { trimempty = true }) -- Type: table
 
   if vim.tbl_isempty(files) then
     return "No files found in '" .. path .. "' (respecting .gitignore)."
   end
+  local tree = {} -- Type: table
 
-  -- Build a nested table representing the directory structure
-  local tree = {}
   for _, filepath in ipairs(files) do
-    local parts = vim.split(filepath, "/")
-    local current_level = tree
+    local parts = vim.split(filepath, "/") -- Type: table
+
+    local current_level = tree -- Type: table
 
     for i, part in ipairs(parts) do
       if i == #parts then
@@ -75,13 +79,12 @@ M.run = function(args)
       end
     end
   end
+  local lines = { "🔍 Project structure for: " .. path } -- Type: table
 
-  -- Recursively format the tree into the final output string
-  local lines = { "🔍 Project structure for: " .. path }
-  local function format_tree(t, prefix)
-    -- Sort keys for consistent, alphabetical output
-    local keys = {}
-    for k in pairs(t) do
+  local function format_tree(t, prefix) -- Type: function
+    local keys = {} -- Type: table
+
+    for k in pairs(t) do -- Type: string
       table.insert(keys, k)
     end
     table.sort(keys)
@@ -100,9 +103,7 @@ M.run = function(args)
       end
     end
   end
-
-  -- A slightly different initial call to format_tree for a cleaner root
-  local function format_root(t)
+  local function format_root(t) -- Type: function
     local keys = {}
     for k in pairs(t) do
       table.insert(keys, k)
@@ -132,8 +133,7 @@ M.run = function(args)
     -- Use a slightly nicer tree-drawing format
     format_root(tree)
   end
-
-  return utils.make_code_block(table.concat(lines, "\n"), "txt")
+  return utils.make_code_block(table.concat(lines, "\n"), "txt") -- Type: string
 end
 
 return M

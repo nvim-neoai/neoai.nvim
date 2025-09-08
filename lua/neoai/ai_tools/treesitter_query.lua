@@ -51,6 +51,9 @@ M.meta = {
   },
 }
 
+--- Gets the buffer number for a given file path.
+--- @param file_path string: The path to the file.
+--- @return integer: The buffer number.
 local function get_bufnr_for_path(file_path)
   if file_path and #file_path > 0 then
     local bufnr = vim.fn.bufnr(file_path, true)
@@ -61,6 +64,9 @@ local function get_bufnr_for_path(file_path)
   end
 end
 
+--- Detects the language of a given buffer.
+--- @param bufnr integer: The buffer number.
+--- @return string|nil: The detected language or nil if not detected.
 local function detect_lang(bufnr)
   -- Prefer explicit ft, then treesitter language mapping
   local ft = vim.bo[bufnr].filetype
@@ -78,6 +84,10 @@ local function detect_lang(bufnr)
   return nil
 end
 
+--- Gets the Tree-sitter parser for a given buffer and language.
+--- @param bufnr integer: The buffer number.
+--- @param lang string|nil: The language for which to get the parser.
+--- @return userdata?, string?: The parser object, and an optional error message if something goes wrong.
 local function get_parser(bufnr, lang)
   local ok, ts = pcall(require, "vim.treesitter")
   if not ok then
@@ -111,8 +121,11 @@ local function get_parser(bufnr, lang)
   end
 end
 
+--- Creates a range table from a Tree-sitter node.
+--- @param node userdata: A Tree-sitter node.
+--- @return table?, string?: The range table, and an optional error message if an error occurs.
 local function make_range(node)
-  if not node or type(node.range) ~= "function" then
+  if not node or not node.range then
     return nil, "Invalid node object provided."
   end
 
@@ -125,6 +138,10 @@ local function make_range(node)
   }
 end
 
+--- Gets the text for a Tree-sitter node from a buffer.
+--- @param node userdata: A Tree-sitter node.
+--- @param bufnr integer: The buffer number.
+--- @return string?, string?: The text of the node, and an optional error message if the operation fails.
 local function node_text(node, bufnr)
   local ok, ts = pcall(require, "vim.treesitter")
   if not ok then
@@ -140,6 +157,10 @@ local function node_text(node, bufnr)
   return table.concat(lines, "\n")
 end
 
+--- Parses a Tree-sitter query for a given language.
+--- @param lang string: The language for which to parse the query.
+--- @param query string: The Tree-sitter query string.
+--- @return userdata?, string?: The parsed query object, and an optional error message if the parsing fails.
 local function parse_query_for_lang(lang, query)
   local ok, ts = pcall(require, "vim.treesitter")
   if not ok then
@@ -161,6 +182,9 @@ local function parse_query_for_lang(lang, query)
   return nil, "No query.parse or parse_query available in vim.treesitter"
 end
 
+--- Runs a Tree-sitter query based on the provided arguments.
+--- @param args table: A table containing query parameters.
+--- @return string?, string?: The result of the query execution, and an optional error message if there is an error.
 M.run = function(args)
   args = args or {}
   local query = args.query
@@ -205,13 +229,13 @@ M.run = function(args)
   end
 
   -- Ensure we have an up-to-date syntax tree
-  local tree = parser:parse()[1]
+  local tree = parser:parse() and parser:parse()[1]
   local root = tree:root()
 
   local results = {}
   local count = 0
 
-  for _, match, metadata in tsq:iter_matches(root, bufnr, 0, -1) do
+  for _, match, metadata in (tsq.iter_matches and tsq:iter_matches(root, bufnr, 0, -1)) or {} do
     -- match is a table: index -> node, with capture names from the query
     for id, node in pairs(match) do
       local capname = tsq.captures[id]

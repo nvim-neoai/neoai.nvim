@@ -23,9 +23,16 @@ M.meta = {
   },
 }
 
+---
+--- Runs the LSP code action with the given arguments.
+---
+--- @param args table: A table containing optional parameters:
+--- - `file_path` (string, optional): Path to the file to inspect, relative to cwd.
+--- - `action_index` (integer, optional): Index of the code action to apply. Lists actions if omitted.
+---
 M.run = function(args)
   args = args or {}
-  -- Determine buffer number
+  ---@type integer
   local bufnr
   if args.file_path and #args.file_path > 0 then
     bufnr = vim.fn.bufnr(args.file_path, true)
@@ -38,13 +45,12 @@ M.run = function(args)
   if not vim.api.nvim_buf_is_loaded(bufnr) then
     return "Failed to load buffer: " .. tostring(args.file_path)
   end
-
-  -- Prepare parameters for codeAction request
+  ---@type table
   local params = vim.lsp.util.make_range_params()
   params.context = { diagnostics = vim.diagnostic.get(bufnr) }
-
-  -- Perform synchronous request for code actions
+  ---@type table
   local results = vim.lsp.buf_request_sync(bufnr, "textDocument/codeAction", params, 1000) or {}
+  ---@type table
   local actions = {}
   for _, res in pairs(results) do
     for _, action in ipairs(res) do
@@ -74,8 +80,7 @@ M.run = function(args)
     end
     return "Applied code action: " .. action.title
   end
-
-  -- Otherwise, list available actions
+  ---@type table
   local titles = {}
   for i, action in ipairs(actions) do
     table.insert(titles, string.format("%d. %s", i, action.title))

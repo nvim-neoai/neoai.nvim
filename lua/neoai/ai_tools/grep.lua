@@ -1,3 +1,5 @@
+---@class GrepModule
+---@field meta table
 local M = {}
 local utils = require("neoai.ai_tools.utils")
 
@@ -25,6 +27,9 @@ M.meta = {
   },
 }
 
+--- Executes the grep command with given arguments.
+--- @param args table: Contains optional parameters 'query_string', 'use_regex', and 'glob'.
+--- @return string: The results of the grep search or an error message.
 M.run = function(args)
   local query = args.query_string
   if not query or #query == 0 then
