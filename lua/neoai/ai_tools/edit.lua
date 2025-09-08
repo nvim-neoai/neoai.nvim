@@ -96,7 +96,62 @@ local function strip_cr(lines)
   end
 end
 
--- Normalise Windows line endings in a single string
+-- Introduce a structure for holding search and replace blocks
+local function parse_search_replace_blocks(edits)
+  local blocks = {}
+
+  for _, edit in ipairs(edits) do
+    local old_block = split_lines(normalise_eol(edit.old_string))
+    local new_block = split_lines(normalise_eol(edit.new_string))
+
+    -- Consider each block as a transactional segment
+    table.insert(blocks, {
+      old_lines = old_block,
+      new_lines = new_block,
+      scope_line_start = edit.start_line,
+      scope_line_end = edit.end_line,
+    })
+  end
+
+  return blocks
+end
+
+-- Modify the find block location to utilise block boundaries
+local function find_block_location(buffer_lines, block, start_hint, end_hint)
+  local old_lines = block.old_lines
+
+  -- Try to find an exact match within the given buffer lines
+  local function find_exact_match(search_lines, starting_idx, ending_idx)
+    for idx = starting_idx, (ending_idx - #search_lines + 1) do
+      local match_found = true
+      for j = 1, #search_lines do
+        -- Match line-by-line, consider whitespace and indentation
+        if buffer_lines[idx + j - 1]:match("^%s*(.-)%s*$") ~= search_lines[j]:match("^%s*(.-)%s*$") then
+          match_found = false
+          break
+        end
+      end
+      if match_found then
+        return idx, idx + #search_lines - 1
+      end
+    end
+
+    return nil, nil
+  end
+
+  -- Use the updated matching strategy considering the block's defined range
+  if start_hint ~= nil then
+    local start_idx, end_idx = find_exact_match(old_lines, start_hint, end_hint or #buffer_lines)
+    if start_idx ~= nil then
+      return start_idx, end_idx
+    end
+  end
+
+  -- If hinted range fails, check the whole file
+  local start_idx, end_idx = find_exact_match(old_lines, 1, #buffer_lines)
+  return start_idx, end_idx
+end
+
 local function normalise_eol(s)
   return (s or ""):gsub("\r\n", "\n"):gsub("\r", "")
 end
