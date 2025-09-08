@@ -303,6 +303,7 @@ M.run = function(args)
       bufnr = bufnr_from_list or vim.fn.bufadd(abs_path),
       original_lines = orig_lines,
     }
+    vim.api.nvim_command("write") -- Autosave after resolving diffs
     return msg
   else
     local ensure_dir = args.ensure_dir
