@@ -1,6 +1,5 @@
---- Function to find the location of a block in buffer_lines using a robust, multi-stage approach.
-
 local utils = require("neoai.ai_tools.utils")
+-- The finder module now handles all search logic.
 local finder = require("neoai.ai_tools.utils.find")
 
 local M = {}
@@ -132,108 +131,6 @@ local function validate_edit(edit, index)
   return nil
 end
 
---- Normalises a block of code for fuzzy matching.
---- Removes comments and collapses whitespace.
----@param lines table A table of strings representing the code block.
----@return string The normalised code string.
-local function normalise_code_block(lines)
-  if not lines or #lines == 0 then
-    return ""
-  end
-
-  local content = table.concat(lines, "\n")
-
-  -- Remove block comments (non-greedy)
-  content = content:gsub("/%*.-%*/", "")
-  content = content:gsub("<!--.- -->", "") -- HTML/XML
-  content = content:gsub("%-%-%[%[.-%]%]", "") -- Lua
-
-  -- Remove single-line comments
-  content = content:gsub("//[^\n]*", "")
-  content = content:gsub("#[^\n]*", "")
-  content = content:gsub("%-%-[^\n]*", "")
-
-  -- Normalise whitespace (newlines, tabs, multiple spaces) to a single space
-  content = content:gsub("%s+", " ")
-
-  -- Trim leading/trailing whitespace
-  return content:gsub("^%s+", ""):gsub("%s+$", "")
-end
-
---- Finds the location of a code block, trying exact match first, then a fuzzy match.
---- This function is more tolerant of whitespace and comment differences than a simple string search.
----@param buffer_lines table The lines of the entire buffer.
----@param block_lines_to_find table The lines of the block to find.
----@param start_hint integer|nil The line to start searching from (1-based).
----@param end_hint integer|nil The line to end searching at (1-based).
----@return integer|nil, integer|nil The start and end line numbers of the match, or nil.
-local function find_block_location(buffer_lines, block_lines_to_find, start_hint, end_hint)
-  if #block_lines_to_find == 0 then
-    return nil, nil -- Empty blocks are handled as a special case in M.run
-  end
-
-  -- Attempt 1: Exact match. This is fast and reliable if the AI is accurate.
-  do
-    local start_search = start_hint or 1
-    local end_search = end_hint or #buffer_lines
-    -- Ensure search is within bounds
-    end_search = math.min(end_search, #buffer_lines - #block_lines_to_find + 1)
-
-    for i = start_search, end_search do
-      local match = true
-      for j = 1, #block_lines_to_find do
-        if buffer_lines[i + j - 1] ~= block_lines_to_find[j] then
-          match = false
-          break
-        end
-      end
-      if match then
-        return i, i + #block_lines_to_find - 1
-      end
-    end
-  end
-
-  -- Attempt 2: Fuzzy match. Normalises code to ignore whitespace and comments.
-  do
-    local normalised_target = normalise_code_block(block_lines_to_find)
-    if normalised_target == "" then
-      return nil, nil -- Cannot match an empty or comment-only block
-    end
-
-    local start_search = start_hint or 1
-    local end_search = end_hint or #buffer_lines
-
-    -- The window size can vary slightly if the AI missed/added comments or blank lines.
-    -- We define a tolerance for how much the line count can differ.
-    local line_count_tolerance = 5
-    local min_scan_lines = math.max(1, #block_lines_to_find - line_count_tolerance)
-    local max_scan_lines = #block_lines_to_find + line_count_tolerance
-
-    for i = start_search, end_search do
-      for L = min_scan_lines, max_scan_lines do
-        if i + L - 1 > #buffer_lines then
-          break
-        end
-
-        local window_lines = {}
-        for k = i, i + L - 1 do
-          table.insert(window_lines, buffer_lines[k])
-        end
-
-        local normalised_window = normalise_code_block(window_lines)
-
-        if normalised_window == normalised_target then
-          -- We found a match. The correct block size is `L` lines.
-          return i, i + L - 1
-        end
-      end
-    end
-  end
-
-  -- If we are here, both attempts failed.
-  return nil, nil
-end
-
 --- Execute the edit operations on a file.
 ---@param args table: A table containing the file path and edits.
 ---@return string: A status message.
@@ -315,10 +212,26 @@ M.run = function(args)
     local new_lines = split_lines(normalise_eol(edit.new_string))
     strip_cr(new_lines)
 
+    local adjusted_new_lines = {}
+    local indent = ""
+    -- Check if the found block exists in the buffer to get its indentation.
+    if start_line > 0 and start_line <= #orig_lines then
+      indent = orig_lines[start_line]:match("^%s*") or ""
+    end
+
+    for _, line in ipairs(new_lines) do
+      -- Only add indentation if the line is not empty.
+      if line:match("%S") then
+        table.insert(adjusted_new_lines, indent .. line)
+      else
+        table.insert(adjusted_new_lines, "")
+      end
+    end
+
     table.insert(planned_edits, {
       start_line = start_line,
       end_line = end_line,
-      new_lines = new_lines,
+      new_lines = adjusted_new_lines, -- Use the indentation-adjusted lines
     })
   end
 
