@@ -112,6 +112,10 @@ local function get_parser(bufnr, lang)
 end
 
 local function make_range(node)
+  if not node or type(node.range) ~= "function" then
+    return nil, "Invalid node object provided."
+  end
+
   local sr, sc, er, ec = node:range() -- 0-based
   return {
     start_line = sr + 1,
