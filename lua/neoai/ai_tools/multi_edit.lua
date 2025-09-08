@@ -2,6 +2,33 @@ local M = {}
 
 local utils = require("neoai.ai_tools.utils")
 
+-- State to hold original content of the buffer being edited.
+local active_edit_state = {}
+
+-- This function is called from chat.lua to close an open diffview window.
+-- CORRECTED: Now fully reverts buffer content to its original state.
+function M.discard_all_diffs()
+  -- 1. Attempt to close the diff UI.
+  local ok, diff_utils = pcall(require, "neoai.ai_tools.utils")
+  if ok and diff_utils and diff_utils.inline_diff and diff_utils.inline_diff.close then
+    diff_utils.inline_diff.close()
+  end
+
+  -- 2. Restore the buffer content from our saved state.
+  local bufnr = active_edit_state.bufnr
+  if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+    -- Overwrite the entire buffer with the original lines.
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, active_edit_state.original_lines)
+    -- After reverting, tell Neovim the buffer is no longer "modified".
+    vim.api.nvim_buf_set_option(bufnr, "modified", false)
+  end
+
+  -- 3. Clear the state to prevent accidental reuse.
+  active_edit_state = {}
+
+  return "All pending edits discarded and buffer reverted."
+end
+
 M.meta = {
   name = "MultiEdit",
   description = utils.read_description("multi_edit"),
@@ -146,6 +173,7 @@ local function replace_in_range(content, old_string, new_string, start_line, end
   return content_norm, 0
 end
 
+-- CORRECTED: Now saves the original buffer state before applying the diff.
 M.run = function(args)
   local rel_path = args.file_path
   local edits = args.edits
@@ -170,6 +198,7 @@ M.run = function(args)
   -- Prefer current buffer content if the file is loaded (avoids mismatch with unsaved changes)
   local content
   local file_exists = false
+  local bufnr_from_list -- We'll capture the buffer number here if found
   do
     local target = vim.fn.fnamemodify(abs_path, ":p")
     for _, b in ipairs(vim.api.nvim_list_bufs()) do
@@ -179,6 +208,7 @@ M.run = function(args)
           local lines = vim.api.nvim_buf_get_lines(b, 0, -1, false)
           content = table.concat(lines, "\n")
           file_exists = true
+          bufnr_from_list = b -- Capture it
           break
         end
       end
@@ -288,6 +318,12 @@ M.run = function(args)
   -- UI mode: open an interactive inline diff with accept/reject controls
   local ok, msg = utils.inline_diff.apply(abs_path, orig_lines, updated_lines)
   if ok then
+    -- SUCCESS: The diff is open. Now we save the state needed to revert.
+    active_edit_state = {
+      -- Find the buffer for the file path, creating it if it doesn't exist.
+      bufnr = bufnr_from_list or vim.fn.bufadd(abs_path),
+      original_lines = orig_lines,
+    }
     return msg
   else
     -- If diff cannot open (e.g. new file), ensure dirs and write directly as a fallback

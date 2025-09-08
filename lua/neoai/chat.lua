@@ -1,4 +1,8 @@
 local chat = {}
+
+local multi_edit = require("neoai.ai_tools.multi_edit")
+
+-- Ensure that the discard_all_diffs function is accessible
 local ai_tools = require("neoai.ai_tools")
 local prompt = require("neoai.prompt")
 local storage = require("neoai.storage")
@@ -327,6 +331,9 @@ end
 
 -- Add message
 function chat.add_message(type, content, metadata, tool_call_id, tool_calls)
+  if type == MESSAGE_TYPES.USER then
+    chat.chat_state.user_feedback = true -- Track that feedback occurred
+  end
   metadata = metadata or {}
   metadata.timestamp = metadata.timestamp or os.date("%Y-%m-%d %H:%M:%S")
 
@@ -381,10 +388,32 @@ function chat.toggle()
 end
 
 -- Send message
+-- CORRECTED: This version uses the project's own `multi_edit` module
+-- to discard diffs, and correctly cleans up its own state afterwards.
 function chat.send_message()
   if chat.chat_state.streaming_active then
-    vim.notify("Please wait for the current response to complete", vim.log.levels.WARN)
-    return
+    -- Check if we are in the "awaiting diff feedback" state.
+    if chat.chat_state.user_feedback then
+      vim.notify("Pending diffs discarded. Continuing...", vim.log.levels.INFO)
+
+      -- 1. Call the tool's own function to close the diff view.
+      --    This respects the project's internal structure.
+      multi_edit.discard_all_diffs()
+
+      -- 2. Clean up the autocmd group that was waiting for the diff to close.
+      --    This is crucial to prevent the old callback from firing unexpectedly.
+      pcall(vim.api.nvim_del_augroup_by_name, "NeoAIInlineDiffAwait")
+
+      -- 3. Reset the global flag that tracks if a diff is active.
+      vim.g.neoai_inline_diff_active = false
+
+      -- 4. Reset our internal state flags to allow the chat to continue.
+      chat.chat_state.user_feedback = false
+      chat.chat_state.streaming_active = false -- We are no longer waiting.
+    else
+      vim.notify("Please wait for the current response to complete", vim.log.levels.WARN)
+      return
+    end
   end
 
   local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.input, 0, -1, false)
@@ -831,6 +860,7 @@ end
 function chat.cancel_stream()
   if chat.chat_state.streaming_active then
     chat.chat_state.streaming_active = false
+    chat.chat_state.user_feedback = true
 
     stop_thinking_animation()
     local t = chat.chat_state._timeout_timer
