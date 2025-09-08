@@ -337,7 +337,7 @@ function M.apply(abs_path, old_lines, new_lines, opts)
   end
 
   -- ---
-  -- Initialization
+  -- Initialisation
   -- ---
 
   State:build_blocks()

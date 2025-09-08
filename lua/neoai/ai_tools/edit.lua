@@ -1,6 +1,7 @@
 --- Function to find the location of a block in buffer_lines using a robust, multi-stage approach.
 
 local utils = require("neoai.ai_tools.utils")
+local finder = require("neoai.ai_tools.utils.find")
 
 local M = {}
 
@@ -301,12 +302,12 @@ M.run = function(args)
       start_line = 1
       end_line = 0 -- This means we replace 0 lines before line 1.
     else
-      start_line, end_line = find_block_location(orig_lines, old_lines, edit.start_line, edit.end_line)
+      start_line, end_line = finder.find_block_location(orig_lines, old_lines, edit.start_line, edit.end_line)
     end
 
     if not start_line then
       return string.format(
-        "Edit %d: Could not find a matching block for 'old_string'. The code may have changed or the string is inaccurate. Fuzzy matching was attempted.",
+        "Edit %d: Could not find a matching block for 'old_string'. The code may have changed or the string is inaccurate. All matching strategies (Exact, Tree-sitter, Normalised Text) failed.",
         i
       )
     end
