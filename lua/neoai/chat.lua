@@ -233,9 +233,10 @@ function chat.setup()
     sessions = {},
     is_open = false,
     streaming_active = false,
-    _timeout_timer = nil, -- handle to the active stream timeout timer (if any)
-    _ts_suspended = false, -- track if Treesitter is suspended for chat buffer
+    _timeout_timer = nil,
+    _ts_suspended = false,
     thinking = { active = false, timer = nil, extmark_id = nil, frame = 1 },
+    _diff_await_id = 0, -- This is necessary for the fix.
   }
 
   -- Initialise storage backend
@@ -388,34 +389,52 @@ function chat.toggle()
 end
 
 -- Send message
--- CORRECTED: This version uses the project's own `multi_edit` module
--- to discard diffs, and correctly cleans up its own state afterwards.
 function chat.send_message()
-  if chat.chat_state.streaming_active then
-    -- Check if we are in the "awaiting diff feedback" state.
-    if chat.chat_state.user_feedback then
-      vim.notify("Pending diffs discarded. Continuing...", vim.log.levels.INFO)
+  if chat.chat_state.streaming_active and chat.chat_state.user_feedback then
+    vim.notify("Pending diffs discarded. Continuing...", vim.log.levels.INFO)
 
-      -- 1. Call the tool's own function to close the diff view.
-      --    This respects the project's internal structure.
-      multi_edit.discard_all_diffs()
+    -- THE FIX PART 1: Invalidate the current waiting period.
+    -- By incrementing the ID, we ensure that the old autocmd callback,
+    -- which is still holding the *previous* ID, will know it is stale.
+    chat.chat_state._diff_await_id = (chat.chat_state._diff_await_id or 0) + 1
+    local unique_await_name = "NeoAIInlineDiffAwait_" .. tostring(chat.chat_state._diff_await_id)
 
-      -- 2. Clean up the autocmd group that was waiting for the diff to close.
-      --    This is crucial to prevent the old callback from firing unexpectedly.
-      pcall(vim.api.nvim_del_augroup_by_name, "NeoAIInlineDiffAwait")
+    -- Clean up the listener and revert the buffer.
+    pcall(vim.api.nvim_del_augroup_by_name, "NeoAIInlineDiffAwait")
+    multi_edit.discard_all_diffs()
 
-      -- 3. Reset the global flag that tracks if a diff is active.
-      vim.g.neoai_inline_diff_active = false
+    -- Reset state flags.
+    vim.g.neoai_inline_diff_active = false
+    chat.chat_state.user_feedback = false
+    chat.chat_state.streaming_active = false
 
-      -- 4. Reset our internal state flags to allow the chat to continue.
-      chat.chat_state.user_feedback = false
-      chat.chat_state.streaming_active = false -- We are no longer waiting.
-    else
-      vim.notify("Please wait for the current response to complete", vim.log.levels.WARN)
-      return
+    -- Get the user's new message.
+    local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.input, 0, -1, false)
+    local message = table.concat(lines, "\n"):gsub("^%s*(.-)%s*$", "%1")
+    if message ~= "" then
+      chat.add_message(MESSAGE_TYPES.USER, message)
     end
+
+    -- Explicitly tell the AI it was wrong.
+    chat.add_message(
+      MESSAGE_TYPES.SYSTEM,
+      "The user has DISCARDED the previous changes. The file has been reverted to its original state. You must now address the user's latest feedback and re-evaluate the situation."
+    )
+
+    -- Continue the conversation.
+    vim.api.nvim_buf_set_lines(chat.chat_state.buffers.input, 0, -1, false, { "" })
+    apply_delay(function()
+      chat.send_to_ai()
+    end)
+    return
   end
 
+  if chat.chat_state.streaming_active then
+    vim.notify("Please wait for the current response to complete", vim.log.levels.WARN)
+    return
+  end
+
+  -- Normal message handling.
   local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.input, 0, -1, false)
   local message = table.concat(lines, "\n"):gsub("^%s*(.-)%s*$", "%1")
   if message == "" then
@@ -570,12 +589,19 @@ function chat.get_tool_calls(tool_schemas)
       {}
     )
 
-    local grp = vim.api.nvim_create_augroup("NeoAIInlineDiffAwait", { clear = true })
+    -- THE FIX PART 2: Create a new, unique waiting period.
+    chat.chat_state._diff_await_id = (chat.chat_state._diff_await_id or 0) + 1
+    local unique_await_name = "NeoAIInlineDiffAwait_" .. tostring(chat.chat_state._diff_await_id)
+    local current_await_id = chat.chat_state._diff_await_id
+    local grp = vim.api.nvim_create_augroup(unique_await_name, { clear = true })
     vim.api.nvim_create_autocmd("User", {
       group = grp,
       pattern = "NeoAIInlineDiffClosed",
       once = true,
       callback = function(ev)
+        if chat.chat_state._diff_await_id ~= current_await_id then
+          return
+        end
         local action = ev and ev.data and ev.data.action or "closed"
         local path = ev and ev.data and ev.data.path or ""
         local msg = "Inline diff finished (" .. action .. ")"
@@ -583,6 +609,37 @@ function chat.get_tool_calls(tool_schemas)
           msg = msg .. ": " .. path
         end
         chat.add_message(MESSAGE_TYPES.SYSTEM, msg, {})
+        vim.g.neoai_inline_diff_active = false
+        apply_delay(function()
+          chat.send_to_ai()
+        end)
+      end,
+    })
+    local current_await_id = chat.chat_state._diff_await_id
+
+    local grp = vim.api.nvim_create_augroup(unique_await_name, { clear = true })
+    vim.api.nvim_create_autocmd("User", {
+      group = grp,
+      pattern = "NeoAIInlineDiffClosed",
+      once = true,
+      callback = function(ev)
+        -- This guard clause is now robust. The stale callback will hold an old ID
+        -- and will be blocked from running, preventing the race condition.
+        -- Confirm ID consistency to prevent race conditions.
+        if chat.chat_state._diff_await_id ~= current_await_id then
+          return
+        end
+
+        local action = ev and ev.data and ev.data.action or "closed"
+        local path = ev and ev.data and ev.data.path or ""
+        local msg = "Inline diff finished (" .. action .. ")"
+        if path ~= "" then
+          msg = msg .. ": " .. path
+        end
+        chat.add_message(MESSAGE_TYPES.SYSTEM, msg, {})
+        -- After user feedback, ensure we await user resolution of diffs correctly.
+        vim.g.neoai_inline_diff_active = false
+        -- Reset state flags to prepare for new user interaction.
         apply_delay(function()
           chat.send_to_ai()
         end)
