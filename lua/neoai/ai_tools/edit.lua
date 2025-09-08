@@ -1,6 +1,8 @@
-local M = {}
+--- Function to find the location of a block in buffer_lines using Tree-sitter for precise syntax matching
 
 local utils = require("neoai.ai_tools.utils")
+
+local M = {}
 
 -- State to hold original content of the buffer being edited.
 local active_edit_state = {}
@@ -10,17 +12,24 @@ local active_edit_state = {}
   Moved to the top of the file to be available for all subsequent functions.
 --]]
 
+--- Split a string into lines.
+---@param str string: The input string.
+---@return table: A table containing the split lines.
 local function split_lines(str)
   -- Use vim.split for consistency with Neovim's line handling.
   return vim.split(str, "\n", { plain = true })
 end
 
+---@param s string: The input string.
+---@return string: The string with normalised line endings.
 local function normalise_eol(s)
   -- Ensure all line endings are just '\n' for consistent processing.
   return (s or ""):gsub("\r\n", "\n"):gsub("\r", "")
 end
 
 -- Normalise Windows line endings in-place (strip trailing \r)
+--- Strip carriage return characters from each line.
+---@param lines table: A table of strings.
 local function strip_cr(lines)
   for i = 1, #lines do
     lines[i] = lines[i]:gsub("\r$", "")
@@ -28,6 +37,10 @@ local function strip_cr(lines)
 end
 
 -- Create a unified diff text using Neovim's builtin diff
+--- Create a unified diff between two sets of lines.
+---@param old_lines table: The original lines.
+---@param new_lines table: The modified lines.
+---@return string: A string representing the unified diff.
 local function unified_diff(old_lines, new_lines)
   local old_str = table.concat(old_lines or {}, "\n")
   local new_str = table.concat(new_lines or {}, "\n")
@@ -37,7 +50,8 @@ local function unified_diff(old_lines, new_lines)
 end
 
 -- This function is called from chat.lua to close an open diffview window.
--- CORRECTED: Now fully reverts buffer content to its original state.
+--- Discard all diffs and revert buffer changes.
+---@return string: A status message.
 function M.discard_all_diffs()
   -- 1. Attempt to close the diff UI.
   local ok, diff_utils = pcall(require, "neoai.ai_tools.utils")
@@ -48,9 +62,7 @@ function M.discard_all_diffs()
   -- 2. Restore the buffer content from our saved state.
   local bufnr = active_edit_state.bufnr
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
-    -- Overwrite the entire buffer with the original lines.
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, active_edit_state.original_lines)
-    -- After reverting, tell Neovim the buffer is no longer "modified".
     vim.api.nvim_buf_set_option(bufnr, "modified", false)
   end
 
@@ -97,6 +109,10 @@ M.meta = {
   },
 }
 
+--- Validate an edit operation.
+---@param edit table: The edit operation.
+---@param index integer: The index of the edit operation.
+---@return string|nil: An error message if validation fails, otherwise nil.
 local function validate_edit(edit, index)
   if type(edit.old_string) ~= "string" then
     return string.format("Edit %d: 'old_string' must be a string", index)
@@ -116,78 +132,59 @@ local function validate_edit(edit, index)
   return nil
 end
 
--- Enhanced function to find the location of a block in buffer_lines with fuzzy matching
-local function find_fuzzy_block_location(buffer_lines, block, start_hint, end_hint)
-  local old_lines = block.old_lines
-
-  -- Helper function to calculate a simple similarity score between two strings
-  local function similarity_score(str1, str2)
-    str1, str2 = str1:gsub("%s+", ""), str2:gsub("%s+", "") -- Ignore spaces for similarity
-    if #str1 < #str2 then
-      str1, str2 = str2, str1
-    end -- Ensure str1 is longer
-
-    -- Calculate Levenshtein distance
-    local costs = {}
-    for i = 0, #str1 do
-      costs[i] = i
-    end
-    for j = 0, #str2 do
-      local last_value = j
-      for i = 0, #str1 do
-        if i == 0 then
-          costs[i] = j
-        else
-          local new_value = costs[i - 1]
-          if str1:sub(i, i) ~= str2:sub(j, j) then
-            new_value = math.min(math.min(new_value, last_value), costs[i]) + 1
-          end
-          costs[i - 1] = last_value
-          last_value = new_value
-        end
-      end
-      if j > 0 then
-        costs[#str1] = last_value
-      end
-    end
-    return costs[#str1]
-  end
-
-  local function find_fuzzy_match(search_lines, starting_idx, ending_idx)
-    for idx = starting_idx, (ending_idx - #search_lines + 1) do
-      local total_difference = 0
-      local match_threshold = 2 -- Allow up to a small number of differences per line
-
-      for j = 1, #search_lines do
-        local diff =
-          similarity_score(buffer_lines[idx + j - 1]:match("^%s*(.-)%s*$"), search_lines[j]:match("^%s*(.-)%s*$"))
-        if diff > match_threshold then
-          total_difference = total_difference + 1
-          if total_difference > match_threshold then
-            break
-          end
-        end
-      end
-
-      if total_difference <= match_threshold then
-        return idx, idx + #search_lines - 1
-      end
-    end
-
+--- Find a block of code using Tree-sitter.
+---@param bufnr integer: The buffer number.
+---@param block_lines_to_find table: A table of lines representing the block.
+---@param start_hint integer|nil: The starting line hint.
+---@param end_hint integer|nil: The ending line hint.
+---@return integer|nil, integer|nil: The start and end line numbers if found, or nil, nil if not found.
+local function find_block_with_treesitter(bufnr, block_lines_to_find, start_hint, end_hint)
+  local ft = vim.bo[bufnr] and vim.bo[bufnr].filetype
+  if not ft then
     return nil, nil
   end
 
-  if start_hint ~= nil then
-    local start_idx, end_idx = find_fuzzy_match(old_lines, start_hint, end_hint or #buffer_lines)
-    if start_idx then
-      return start_idx, end_idx
+  pcall(vim.treesitter.start, bufnr, ft)
+  local parser = vim.treesitter.get_parser(bufnr, ft)
+  if not parser then
+    return nil, nil
+  end
+
+  local tree = parser:parse()[1]
+  if not tree then
+    return nil, nil
+  end
+  local root = tree:root()
+
+  local query_str = "(_) @match"
+  local query = vim.treesitter.query.parse(ft, query_str)
+  if not query then
+    return nil, nil
+  end
+
+  local text_to_find = table.concat(block_lines_to_find, "\n")
+  if text_to_find == "" then
+    return nil, nil
+  end
+
+  for id, node in query:iter_captures(root, bufnr, start_hint and start_hint - 1 or 0, end_hint or -1) do
+    if query.captures[id] == "match" then
+      local start_row, _, end_row, _ = node:range()
+      local node_lines = vim.api.nvim_buf_get_lines(bufnr, start_row, end_row + 1, false)
+      local node_text = table.concat(node_lines, "\n")
+
+      if node_text == text_to_find then
+        return start_row + 1, end_row + 1
+      end
     end
   end
 
-  return find_fuzzy_match(old_lines, 1, #buffer_lines)
+  return nil, nil
 end
 
--- CORRECTED: Now saves the original buffer state before applying the diff.
+--- Execute the edit operations on a file.
+---@param args table: A table containing the file path and edits.
+---@return string: A status message.
 M.run = function(args)
   local rel_path = args.file_path
   local edits = args.edits
@@ -209,10 +206,9 @@ M.run = function(args)
   local cwd = vim.fn.getcwd()
   local abs_path = cwd .. "/" .. rel_path
 
-  -- Prefer current buffer content if the file is loaded (avoids mismatch with unsaved changes)
   local content
   local file_exists = false
-  local bufnr_from_list -- We'll capture the buffer number here if found
+  local bufnr_from_list
   do
     local target = vim.fn.fnamemodify(abs_path, ":p")
     for _, b in ipairs(vim.api.nvim_list_bufs()) do
@@ -222,7 +218,7 @@ M.run = function(args)
           local lines = vim.api.nvim_buf_get_lines(b, 0, -1, false)
           content = table.concat(lines, "\n")
           file_exists = true
-          bufnr_from_list = b -- Capture it
+          bufnr_from_list = b
           break
         end
       end
@@ -239,31 +235,36 @@ M.run = function(args)
     end
   end
 
-  -- Normalise for consistent matching across platforms
   content = normalise_eol(content)
-
-  -- Prepare original and working lines (strip CR to avoid Windows EOL mismatch)
   local orig_lines = split_lines(content)
   strip_cr(orig_lines)
 
-  --[[
-    REMOVED: This entire block was buggy and redundant.
-    1. It unsafely modified the `planned_edits` table while iterating over it.
-    2. It was immediately discarded by `local planned_edits = {}` on the next line.
-    The correct logic is handled by the loop that follows.
-  --]]
+  local bufnr
+  if bufnr_from_list then
+    bufnr = bufnr_from_list
+  else
+    -- Create a temporary buffer for parsing.
+    bufnr = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_name(bufnr, abs_path)
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, orig_lines)
+    vim.api.nvim_buf_set_option(bufnr, "modified", false)
+  end
+
+  -- Trigger autocommands to ensure filetype detection for Tree-sitter.
+  vim.cmd("silent doautocmd BufRead " .. vim.api.nvim_buf_get_name(bufnr))
 
   local planned_edits = {}
   for i, edit in ipairs(edits) do
     local old_lines = split_lines(normalise_eol(edit.old_string))
     strip_cr(old_lines)
 
-    local start_line, end_line = find_fuzzy_block_location(orig_lines, {
-      old_lines = old_lines,
-      new_lines = {}, -- Placeholder for new lines
-    }, edit.start_line, edit.end_line)
+    local start_line, end_line = find_block_with_treesitter(bufnr, old_lines, edit.start_line, edit.end_line)
 
     if not start_line then
+      -- Clean up the temporary buffer if we created one before returning the error.
+      if not bufnr_from_list then
+        vim.api.nvim_buf_delete(bufnr, { force = true })
+      end
       return string.format(
         "Edit %d: Could not find a matching block for 'old_string'. The code may have changed or the string is inaccurate.",
         i
@@ -280,7 +281,11 @@ M.run = function(args)
     })
   end
 
-  -- Apply edits in reverse order to avoid line number shifts
+  -- If we created a temporary buffer, clean it up now that we're done with it.
+  if not bufnr_from_list then
+    vim.api.nvim_buf_delete(bufnr, { force = true })
+  end
+
   table.sort(planned_edits, function(a, b)
     return a.start_line > b.start_line
   end)
@@ -289,15 +294,11 @@ M.run = function(args)
   local total_replacements = 0
 
   for _, planned_edit in ipairs(planned_edits) do
-    -- CORRECTED: Replace the lines for the matched block.
-    -- The standard `table.remove` only accepts a single position, so we must
-    -- loop to remove a range of lines.
     local num_to_remove = planned_edit.end_line - planned_edit.start_line + 1
     for _ = 1, num_to_remove do
       table.remove(working_lines, planned_edit.start_line)
     end
 
-    -- Insert the new lines at the now-empty position.
     for i, line in ipairs(planned_edit.new_lines) do
       table.insert(working_lines, planned_edit.start_line - 1 + i, line)
     end
@@ -308,13 +309,10 @@ M.run = function(args)
     return string.format("No replacements made in %s.", rel_path)
   end
 
-  -- The 'working_lines' table now holds the fully modified content.
   local updated_lines = working_lines
 
-  -- If headless (no UI), auto-apply and return summary + diff + diagnostics.
   local uis = vim.api.nvim_list_uis()
   if not uis or #uis == 0 then
-    -- Ensure parent directory if requested
     local ensure_dir = args.ensure_dir
     if ensure_dir == nil then
       ensure_dir = true
@@ -345,18 +343,14 @@ M.run = function(args)
     return table.concat(parts, "\n\n")
   end
 
-  -- UI mode: open an interactive inline diff with accept/reject controls
   local ok, msg = utils.inline_diff.apply(abs_path, orig_lines, updated_lines)
   if ok then
-    -- SUCCESS: The diff is open. Now we save the state needed to revert.
     active_edit_state = {
-      -- Find the buffer for the file path, creating it if it doesn't exist.
       bufnr = bufnr_from_list or vim.fn.bufadd(abs_path),
       original_lines = orig_lines,
     }
     return msg
   else
-    -- If diff cannot open (e.g. new file), ensure dirs and write directly as a fallback
     local ensure_dir = args.ensure_dir
     if ensure_dir == nil then
       ensure_dir = true
