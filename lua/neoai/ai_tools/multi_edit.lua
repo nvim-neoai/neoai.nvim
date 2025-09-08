@@ -110,67 +110,50 @@ local function unified_diff(old_lines, new_lines)
   return diff or "(no changes)"
 end
 
--- Compute 1-based byte offsets for the start of each line in a content string
-local function compute_line_offsets(content)
-  local offsets = { 1 }
-  for pos in content:gmatch("()\n") do
-    offsets[#offsets + 1] = pos + 1
-  end
-  return offsets
-end
-
--- Build a whitespace-insensitive Lua pattern from a literal string
-local function build_fuzzy_pattern(s)
-  local esc = utils.escape_pattern(s or "")
-  return esc:gsub("%s+", "%%%%s+")
-end
-
--- Replace occurrences of old_string within a [start_line, end_line] range of the content string.
--- Tries literal match first, then whitespace-insensitive matching.
--- Returns: new_content, replacements_count
-local function replace_in_range(content, old_string, new_string, start_line, end_line)
-  local lines = split_lines(normalise_eol(content))
-  strip_cr(lines)
-  local total_lines = #lines
-
-  start_line = math.max(1, start_line or 1)
-  end_line = math.min(total_lines, end_line or total_lines)
-
-  if total_lines == 0 or start_line > end_line then
-    return content, 0
+-- Finds the location of a block of search_lines within buffer_lines.
+-- @param buffer_lines table: The lines of the entire file.
+-- @param search_lines table: The lines of the block to search for.
+-- @param start_hint integer|nil: The suggested start line for the search.
+-- @param end_hint integer|nil: The suggested end line for the search.
+-- @return integer|nil, integer|nil: The start and end lines of the match, or nil, nil.
+local function find_block_location(buffer_lines, search_lines, start_hint, end_hint)
+  if #search_lines == 0 then
+    return nil, nil
   end
 
-  local content_norm = table.concat(lines, "\n")
-  local offsets = compute_line_offsets(content_norm)
-
-  local start_off = offsets[start_line] or 1
-  local end_off = (offsets[end_line + 1] or (#content_norm + 1)) - 1
-
-  local before = content_norm:sub(1, start_off - 1)
-  local region = content_norm:sub(start_off, end_off)
-  local after = content_norm:sub(end_off + 1)
-
-  local replacement = normalise_eol(new_string)
-
-  -- 1) Literal match
-  local literal_pat = utils.escape_pattern(normalise_eol(old_string))
-  local replaced_region, count = region:gsub(literal_pat, function()
-    return replacement
-  end)
-  if count > 0 then
-    return before .. replaced_region .. after, count
+  local function find_match(lines_to_search, start_idx, end_idx)
+    for i = start_idx, end_idx - #search_lines + 1 do
+      local is_match = true
+      for j = 1, #search_lines do
+        -- Use a whitespace-insensitive comparison for robustness
+        if lines_to_search[i + j - 1]:match("^%s*(.-)%s*$") ~= search_lines[j]:match("^%s*(.-)%s*$") then
+          is_match = false
+          break
+        end
+      end
+      if is_match then
+        return i, i + #search_lines - 1
+      end
+    end
+    return nil, nil
   end
 
-  -- 2) Whitespace-insensitive match
-  local fuzzy_pat = build_fuzzy_pattern(old_string)
-  replaced_region, count = region:gsub(fuzzy_pat, function()
-    return replacement
-  end)
-  if count > 0 then
-    return before .. replaced_region .. after, count
+  -- 1. Try searching within the hinted range first.
+  if start_hint then
+    local s, e = find_match(buffer_lines, start_hint, end_hint or #buffer_lines)
+    if s then
+      return s, e
+    end
   end
 
-  return content_norm, 0
+  -- 2. If that fails or no hint was given, search the entire file.
+  local s, e = find_match(buffer_lines, 1, #buffer_lines)
+  if s then
+    return s, e
+  end
+
+  -- 3. If all else fails, return nil.
+  return nil, nil
 end
 
 -- CORRECTED: Now saves the original buffer state before applying the diff.
@@ -235,51 +218,54 @@ M.run = function(args)
 
   local total_replacements = 0
 
-  for _, edit in ipairs(edits) do
-    -- First, attempt replacements restricted to the specified line range (supports multi-line needles)
-    local new_content, count =
-      replace_in_range(working_content, edit.old_string, edit.new_string, edit.start_line, edit.end_line)
+  -- Plan the edits:
+  local planned_edits = {}
+  for i, edit in ipairs(edits) do
+    local old_lines = split_lines(normalise_eol(edit.old_string))
+    strip_cr(old_lines)
 
-    -- If nothing matched within the range, fallback: replace the first occurrence anywhere in the file
-    if count == 0 then
-      local repl_fn = function()
-        return normalise_eol(edit.new_string)
-      end
-      local old_pat = utils.escape_pattern(normalise_eol(edit.old_string))
-      local replaced_once, c = working_content:gsub(old_pat, repl_fn, 1)
-      if c and c > 0 then
-        working_content = replaced_once
-        count = c
-      else
-        -- Try fuzzy anywhere in the file
-        local fuzzy_pat = build_fuzzy_pattern(edit.old_string)
-        replaced_once, c = working_content:gsub(fuzzy_pat, repl_fn, 1)
-        if c and c > 0 then
-          working_content = replaced_once
-          count = c
-        end
-      end
-    else
-      working_content = new_content
-    end
+    local start_line, end_line = find_block_location(orig_lines, old_lines, edit.start_line, edit.end_line)
 
-    if count == 0 then
+    if not start_line then
       return string.format(
-        "No match for '%s'. Try adjusting the start/end line range or provide a more precise old_string.",
-        edit.old_string
+        "Edit %d: Could not find a matching block for 'old_string'. The code may have changed or the string is inaccurate.",
+        i
       )
     end
 
-    total_replacements = total_replacements + count
+    local new_lines = split_lines(normalise_eol(edit.new_string))
+    strip_cr(new_lines)
+
+    table.insert(planned_edits, {
+      start_line = start_line,
+      end_line = end_line,
+      new_lines = new_lines,
+    })
+  end
+
+  -- Apply edits in reverse order:
+  table.sort(planned_edits, function(a, b)
+    return a.start_line > b.start_line
+  end)
+
+  local working_lines = vim.deepcopy(orig_lines)
+  local total_replacements = 0
+
+  for _, planned_edit in ipairs(planned_edits) do
+    -- Replace the lines for the matched block
+    table.remove(working_lines, planned_edit.start_line, planned_edit.end_line - planned_edit.start_line + 1)
+    for i, line in ipairs(planned_edit.new_lines) do
+      table.insert(working_lines, planned_edit.start_line - 1 + i, line)
+    end
+    total_replacements = total_replacements + 1
   end
 
   if total_replacements == 0 then
     return string.format("No replacements made in %s.", rel_path)
   end
 
-  -- Compose updated lines for diff/UI
-  local updated_lines = split_lines(working_content)
-  strip_cr(updated_lines)
+  -- The 'working_lines' table now holds the fully modified content.
+  local updated_lines = working_lines
 
   -- If headless (no UI), auto-apply and return summary + diff + diagnostics.
   local uis = vim.api.nvim_list_uis()
