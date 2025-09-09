@@ -176,6 +176,10 @@ end
 local CTRL_C_NS = vim.api.nvim_create_namespace("NeoAICtrlC")
 local CTRL_C_KEY = vim.api.nvim_replace_termcodes("<C-c>", true, false, true)
 
+local function log(variable, name)
+  print(name .. " = ", vim.inspect(variable))
+end
+
 local function enable_ctrl_c_cancel()
   if not chat.chat_state then
     return
@@ -398,7 +402,7 @@ function chat.send_message()
   if chat.chat_state.streaming_active and chat.chat_state.user_feedback then
     vim.notify("Pending diffs discarded. Continuing...", vim.log.levels.INFO)
     -- Increment the awaited ID to create a new unique waiting period.
-    chat.chat_state._diff_await_id = (chat.chat_state._diff_await_id or 0) + 1
+    chat.chat_state._diff_await_id = vim.api.nvim_create_augroup("NeoAIInlineDiffAwait", { clear = true })
     local current_await_id = chat.chat_state._diff_await_id
 
     -- Clean up the listener and revert the buffer.
@@ -596,7 +600,6 @@ function chat.get_tool_calls(tool_schemas)
     chat.chat_state._diff_await_id = (chat.chat_state._diff_await_id or 0) + 1
     -- Reuse the incremented awaited ID to ensure consistency during the wait
     local current_await_id = chat.chat_state._diff_await_id
-    local unique_await_name = "NeoAIInlineDiffAwait_" .. tostring(current_await_id)
 
     local grp = vim.api.nvim_create_augroup(unique_await_name, { clear = true })
     vim.api.nvim_create_autocmd("User", {
@@ -622,9 +625,8 @@ function chat.get_tool_calls(tool_schemas)
         end)
       end,
     })
-    -- Reuse the same await ID to ensure no new AI action until resolution
+    log(unique_await_name, "unique_await_name")
 
-    vim.api.nvim_create_augroup(unique_await_name, { clear = true })
     vim.api.nvim_create_autocmd("User", {
       group = grp,
       pattern = "NeoAIInlineDiffClosed",
@@ -728,7 +730,9 @@ function chat.stream_ai_response(messages)
       display = display .. "\n" .. body
     end
     if type(content) ~= "boolean" then
-      chat.append_to_streaming_message(reason, content, "")
+      if type(content) ~= "boolean" then
+        chat.append_to_streaming_message(reason, content, "")
+      end
     end
   end
 
@@ -781,7 +785,7 @@ function chat.stream_ai_response(messages)
     end
 
     if chunk.type == "content" and chunk.data ~= "" then
-      content = content .. chunk.data
+      content = tostring(content) .. chunk.data
       chat.update_streaming_message(reason, tostring(content or ""), false)
     elseif chunk.type == "reasoning" and chunk.data ~= "" then
       reason = reason .. chunk.data
@@ -943,7 +947,7 @@ function chat.append_to_streaming_message(reason, content, extra)
   if content and content ~= "" then
     display = display .. content
   end
-  if extra and extra ~= "" then
+  if type(extra) == "string" and extra ~= "" then
     display = display .. "\n" .. extra
   end
   chat.update_streaming_message(display, true)
