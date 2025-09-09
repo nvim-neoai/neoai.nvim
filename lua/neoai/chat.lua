@@ -563,7 +563,7 @@ function chat.get_tool_calls(tool_schemas)
                 meta.display = resp.display
               end
             else
-              content = resp or ""
+              content = type(resp) == "string" and resp or tostring(resp) or ""
             end
           end
           if content == "" then
