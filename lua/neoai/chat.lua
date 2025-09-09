@@ -592,8 +592,9 @@ function chat.get_tool_calls(tool_schemas)
     -- THE FIX PART 2: Create a new, unique waiting period.
     chat.chat_state._diff_await_id = (chat.chat_state._diff_await_id or 0) + 1
     local unique_await_name = "NeoAIInlineDiffAwait_" .. tostring(chat.chat_state._diff_await_id)
+    -- Create a unique group for each wait
     local current_await_id = chat.chat_state._diff_await_id
-    local grp = vim.api.nvim_create_augroup(unique_await_name, { clear = true })
+    grp = vim.api.nvim_create_augroup(unique_await_name, { clear = true })
     vim.api.nvim_create_autocmd("User", {
       group = grp,
       pattern = "NeoAIInlineDiffClosed",
@@ -615,7 +616,7 @@ function chat.get_tool_calls(tool_schemas)
         end)
       end,
     })
-    local current_await_id = chat.chat_state._diff_await_id
+    -- Reuse the same await ID to ensure no new AI action until resolution
 
     local grp = vim.api.nvim_create_augroup(unique_await_name, { clear = true })
     vim.api.nvim_create_autocmd("User", {
