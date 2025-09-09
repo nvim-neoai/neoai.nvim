@@ -147,10 +147,15 @@ local function node_text(node, bufnr)
   if not ok then
     return nil
   end
+  if node == nil or not node.range then
+    return nil -- Or some default/fallback behaviour
+  end
+
   local ok2, text = pcall(ts.get_node_text, node, bufnr)
   if ok2 then
     return text
   end
+
   -- Fallback: manual extraction via buffer lines
   local sr, sc, er, ec = node:range()
   local lines = vim.api.nvim_buf_get_text(bufnr, sr, sc, er, ec, {})
