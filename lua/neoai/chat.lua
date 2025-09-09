@@ -721,7 +721,7 @@ function chat.stream_ai_response(messages)
     if body ~= "" then
       display = display .. "\n" .. body
     end
-    chat.update_streaming_message(reason, content .. "\n" .. display) -- Append tool preparation to the existing content
+    chat.append_to_streaming_message(reason, content, display) -- Append tool preparation to the existing content
   end
 
   if chat.chat_state._timeout_timer then
@@ -882,7 +882,7 @@ function chat.stream_ai_response(messages)
 end
 
 -- Update streaming display (shows reasoning and content as they arrive)
-function chat.update_streaming_message(reason, content)
+function chat.update_streaming_message(reason, content, append)
   if not chat.chat_state.is_open or not chat.chat_state.streaming_active then
     return
   end
@@ -908,13 +908,31 @@ function chat.update_streaming_message(reason, content)
         table.insert(new_lines, "  " .. ln)
       end
       table.insert(new_lines, "")
-      vim.api.nvim_buf_set_lines(chat.chat_state.buffers.chat, 0, -1, false, new_lines)
+      vim.api.nvim_buf_set_lines(chat.chat_state.buffers.chat, append and #lines or 0, -1, false, new_lines)
       if chat.chat_state.config.auto_scroll then
         scroll_to_bottom(chat.chat_state.buffers.chat)
       end
       break
     end
   end
+end
+
+-- Append content to current stream
+function chat.append_to_streaming_message(reason, content, extra)
+  if not chat.chat_state.is_open or not chat.chat_state.streaming_active then
+    return
+  end
+  local display = ""
+  if reason and reason ~= "" then
+    display = display .. "<think>\n" .. reason .. "\n</think>\n\n"
+  end
+  if content and content ~= "" then
+    display = display .. content
+  end
+  if extra and extra ~= "" then
+    display = display .. "\n" .. extra
+  end
+  chat.update_streaming_message(display, true)
 end
 
 -- Allow cancelling current stream
