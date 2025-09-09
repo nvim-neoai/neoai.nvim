@@ -721,8 +721,7 @@ function chat.stream_ai_response(messages)
     if body ~= "" then
       display = display .. "\n" .. body
     end
-    chat.tool_prep_status = display -- Cache tool preparation for continuous rendering
-    chat.update_streaming_message(reason, content) -- Continue normal content update post-tool-prep
+    chat.update_streaming_message(reason, content .. "\n" .. display) -- Append tool preparation to the existing content
   end
 
   if chat.chat_state._timeout_timer then
@@ -889,9 +888,6 @@ function chat.update_streaming_message(reason, content)
   end
   local display = ""
   -- Add tool preparation status above other AI or reasoning content
-  if chat.tool_prep_status and chat.tool_prep_status ~= "" then
-    display = display .. "<toolprep>\n" .. chat.tool_prep_status .. "\n</toolprep>\n\n"
-  end
 
   if reason and reason ~= "" then
     display = display .. "<think>\n" .. reason .. "\n</think>\n\n"
