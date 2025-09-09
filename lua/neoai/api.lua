@@ -4,8 +4,13 @@ local tool_schemas = require("neoai.ai_tools").tool_schemas
 local api = {}
 
 -- Track current streaming job
+--- @type Job|nil  -- Current streaming job
 local current_job = nil
 
+--- Merges two tables into a new one.
+--- @param t1 table  -- The first table
+--- @param t2 table  -- The second table
+--- @return table  -- The merged table
 local function merge_tables(t1, t2)
   local result = {}
   for k, v in pairs(t1) do
@@ -164,6 +169,7 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
 end
 
 --- Cancel current streaming request (if any)
+--- Cancels the current streaming request if one exists.
 function api.cancel()
   local job = current_job
   if not job then

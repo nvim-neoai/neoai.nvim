@@ -331,6 +331,11 @@ local function update_chat_display()
 end
 
 -- Add message
+---@param type string
+---@param content string
+---@param metadata table | nil
+---@param tool_call_id string | nil
+---@param tool_calls string | nil
 function chat.add_message(type, content, metadata, tool_call_id, tool_calls)
   if type == MESSAGE_TYPES.USER then
     chat.chat_state.user_feedback = true -- Track that feedback occurred
@@ -519,6 +524,7 @@ function chat.send_to_ai()
 end
 
 -- Tool call handling
+---@param tool_schemas table
 function chat.get_tool_calls(tool_schemas)
   if #tool_schemas == 0 then
     vim.notify("No valid tool calls found", vim.log.levels.WARN)
@@ -774,10 +780,10 @@ function chat.stream_ai_response(messages)
 
     if chunk.type == "content" and chunk.data ~= "" then
       content = content .. chunk.data
-      chat.update_streaming_message(reason, content)
+      chat.update_streaming_message(reason, tostring(content), false)
     elseif chunk.type == "reasoning" and chunk.data ~= "" then
       reason = reason .. chunk.data
-      chat.update_streaming_message(reason, content)
+      chat.update_streaming_message(reason, tostring(content), false)
     elseif chunk.type == "tool_calls" then
       if chunk.data and type(chunk.data) == "table" then
         tool_prep_seen = true
@@ -882,6 +888,9 @@ function chat.stream_ai_response(messages)
 end
 
 -- Update streaming display (shows reasoning and content as they arrive)
+---@param reason string | nil
+---@param content string | nil
+---@param append boolean
 function chat.update_streaming_message(reason, content, append)
   if not chat.chat_state.is_open or not chat.chat_state.streaming_active then
     return
@@ -893,7 +902,7 @@ function chat.update_streaming_message(reason, content, append)
     display = display .. "<think>\n" .. reason .. "\n</think>\n\n"
   end
   if content and content ~= "" then
-    display = display .. content
+    display = display .. tostring(content)
   end
   local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.chat, 0, -1, false)
   for i = #lines, 1, -1 do
@@ -918,6 +927,9 @@ function chat.update_streaming_message(reason, content, append)
 end
 
 -- Append content to current stream
+---@param reason string | nil
+---@param content string | nil
+---@param extra string | nil
 function chat.append_to_streaming_message(reason, content, extra)
   if not chat.chat_state.is_open or not chat.chat_state.streaming_active then
     return
