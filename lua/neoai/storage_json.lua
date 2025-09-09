@@ -40,12 +40,17 @@ local function load()
   end
 end
 
+---@param config table
+---@return boolean
 function M.init(config)
   json_path = config.database_path or (vim.fn.stdpath("data") .. "/neoai.json")
   load()
   return true
 end
 
+---@param title string
+---@param metadata table
+---@return integer
 function M.create_session(title, metadata)
   title = title or ("Session " .. os.date("%Y-%m-%d %H:%M:%S"))
   metadata = metadata or {}
@@ -66,6 +71,7 @@ function M.create_session(title, metadata)
   return session.id
 end
 
+---@return table|nil
 function M.get_active_session()
   for _, s in ipairs(data.sessions) do
     if s.is_active then
@@ -75,6 +81,8 @@ function M.get_active_session()
   return nil
 end
 
+---@param session_id integer
+---@return boolean
 function M.switch_session(session_id)
   local found = false
   for _, s in ipairs(data.sessions) do
@@ -96,6 +104,8 @@ function M.switch_session(session_id)
   end
 end
 
+---@param limit integer
+---@return table
 function M.get_all_sessions(limit)
   limit = limit or 50
   local sessions = {}
@@ -108,6 +118,8 @@ function M.get_all_sessions(limit)
   return sessions
 end
 
+---@param session_id integer
+---@return boolean
 function M.delete_session(session_id)
   local idx = nil
   for i, s in ipairs(data.sessions) do
@@ -135,6 +147,9 @@ function M.delete_session(session_id)
   end
 end
 
+---@param session_id integer
+---@param new_title string
+---@return boolean
 function M.update_session_title(session_id, new_title)
   for _, s in ipairs(data.sessions) do
     if s.id == session_id then
@@ -147,6 +162,13 @@ function M.update_session_title(session_id, new_title)
   return false
 end
 
+---@param session_id integer
+---@param type string
+---@param content string
+---@param metadata table
+---@param tool_call_id any
+---@param tool_calls any
+---@return integer
 function M.add_message(session_id, type, content, metadata, tool_call_id, tool_calls)
   metadata = metadata or {}
   metadata.timestamp = metadata.timestamp or os.date("%Y-%m-%d %H:%M:%S")
@@ -173,6 +195,9 @@ function M.add_message(session_id, type, content, metadata, tool_call_id, tool_c
   return message.id
 end
 
+---@param session_id integer
+---@param limit integer
+---@return table
 function M.get_session_messages(session_id, limit)
   limit = limit or 1000
   local messages = {}
@@ -194,6 +219,8 @@ function M.get_session_messages(session_id, limit)
   return messages
 end
 
+---@param session_id integer
+---@return boolean
 function M.clear_session_messages(session_id)
   local new_messages = {}
   for _, m in ipairs(data.messages) do
@@ -207,6 +234,7 @@ function M.clear_session_messages(session_id)
   return true
 end
 
+---@return table
 function M.get_stats()
   local active_sessions = 0
   for _, s in ipairs(data.sessions) do

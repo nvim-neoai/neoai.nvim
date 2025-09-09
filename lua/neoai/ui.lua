@@ -1,8 +1,12 @@
+---@type table<string, function>
 local ui = {}
 local chat_state = require("neoai.chat").chat_state
 
+---@return integer|nil # Rightmost window ID or nil if no windows exist
 local function get_rightmost_win()
+  ---@type integer|nil
   local rightmost_win = nil
+  ---@type integer
   local max_col = -1
 
   for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -18,6 +22,8 @@ local function get_rightmost_win()
 end
 
 --- Open NeoAI chat UI
+--- Opens the NeoAI chat UI by creating necessary windows and buffers.
+---@return nil
 function ui.open()
   if chat_state.is_open then
     return
@@ -55,21 +61,28 @@ function ui.open()
   local chat_win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(chat_win, chat_state.buffers.chat)
   vim.api.nvim_set_option_value("winbar", " Chat ", { win = chat_win })
-
-  -- Apply vertical space ratio between chat (top) and input (bottom)
+  ---@type table
   local cfg = chat_state.config.window or {}
-  local ratio = cfg.height_ratio or 0.8 -- default: 80% chat, 20% input
-  if ratio < 0 then ratio = 0 end
-  if ratio > 1 then ratio = 1 end
-  local min_input = cfg.min_input_lines or 3 -- ensure input has at least a few lines
-  if min_input < 1 then min_input = 1 end
-
-  -- Total height of the right-hand column is the sum of both split heights
+  ---@type number
+  local ratio = cfg.height_ratio or 0.8
+  if ratio < 0 then
+    ratio = 0
+  end
+  if ratio > 1 then
+    ratio = 1
+  end
+  ---@type integer
+  local min_input = cfg.min_input_lines or 3
+  if min_input < 1 then
+    min_input = 1
+  end
+  ---@type integer
   local chat_h = vim.api.nvim_win_get_height(chat_win)
+  ---@type integer
   local input_h = vim.api.nvim_win_get_height(input_win)
+  ---@type integer
   local total_h = chat_h + input_h
-
-  -- Target chat height based on ratio, respecting minimum input height
+  ---@type integer
   local target_chat_h = math.floor(total_h * ratio + 0.5)
   if total_h - target_chat_h < min_input then
     target_chat_h = math.max(1, total_h - min_input)
@@ -86,6 +99,8 @@ function ui.open()
 end
 
 --- Close NeoAI chat UI
+--- Closes the NeoAI chat UI and cleans up the associated windows and buffers.
+---@return nil
 function ui.close()
   if not chat_state.is_open then
     return
