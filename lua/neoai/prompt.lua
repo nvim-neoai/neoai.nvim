@@ -1,14 +1,16 @@
 local M = {}
 
--- Helper to get the plugin directory
+--- Helper to get the plugin directory
+--- @return string
 local function get_plugin_dir()
   local info = debug.getinfo(1, "S")
   -- source string starts with '@' for file path
   return info.source:sub(2):match("(.*/)")
 end
 
--- Load and cache the system prompt template
 local template
+--- Load and cache the system prompt template
+--- @return string?
 function M.load_template()
   if not template then
     local template_path = get_plugin_dir() .. "prompts/system_prompt.md"
@@ -24,8 +26,8 @@ function M.load_template()
 end
 
 -- Interpolate the template with provided data
----@param data table A mapping of placeholder keys to replacement strings
----@return string
+---@param data table<string, string> # A mapping of placeholder keys to replacement strings
+---@return string # The interpolated string after replacing placeholders with data.
 function M.get_system_prompt(data)
   local tpl = M.load_template()
   if not tpl then

@@ -1,4 +1,5 @@
 local M = {}
+---@type table<string, table<string, string>>
 local keymaps = require("neoai.config").values.keymaps
 
 --- Setup key mappings
@@ -17,7 +18,9 @@ function M.setup()
 end
 
 --- Setup buffer-local key mappings when chat is open
+--- Setup buffer-local key mappings when chat is open
 function M.buffer_setup()
+  ---@type table<string, any>
   local chat_state = require("neoai.chat").chat_state
 
   -- Insert file with @@ trigger in insert mode
