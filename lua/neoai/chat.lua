@@ -335,7 +335,7 @@ end
 ---@param content string
 ---@param metadata table | nil
 ---@param tool_call_id string | nil
----@param tool_calls string | nil
+---@param tool_calls table | string | nil
 function chat.add_message(type, content, metadata, tool_call_id, tool_calls)
   if type == MESSAGE_TYPES.USER then
     chat.chat_state.user_feedback = true -- Track that feedback occurred
@@ -402,7 +402,6 @@ function chat.send_message()
     -- By incrementing the ID, we ensure that the old autocmd callback,
     -- which is still holding the *previous* ID, will know it is stale.
     chat.chat_state._diff_await_id = (chat.chat_state._diff_await_id or 0) + 1
-    local unique_await_name = "NeoAIInlineDiffAwait_" .. tostring(chat.chat_state._diff_await_id)
 
     -- Clean up the listener and revert the buffer.
     pcall(vim.api.nvim_del_augroup_by_name, "NeoAIInlineDiffAwait")
@@ -597,10 +596,8 @@ function chat.get_tool_calls(tool_schemas)
 
     -- Create a new, unique waiting period.
     chat.chat_state._diff_await_id = (chat.chat_state._diff_await_id or 0) + 1
-    local unique_await_name = "NeoAIInlineDiffAwait_" .. tostring(chat.chat_state._diff_await_id)
     -- Create a unique group for each wait
     local unique_await_name = "NeoAIInlineDiffAwait_" .. tostring(chat.chat_state._diff_await_id)
-
     vim.api.nvim_create_autocmd("User", {
       group = grp,
       pattern = "NeoAIInlineDiffClosed",
@@ -689,7 +686,7 @@ function chat.stream_ai_response(messages)
   local reason, content, tool_calls_response = "", "", {}
   local start_time = os.time()
   local saw_first_token = false
-  local tool_prep_seen = false
+
   local has_completed = false
 
   local function human_bytes(n)
@@ -786,7 +783,6 @@ function chat.stream_ai_response(messages)
       chat.update_streaming_message(reason, tostring(content), false)
     elseif chunk.type == "tool_calls" then
       if chunk.data and type(chunk.data) == "table" then
-        tool_prep_seen = true
         for _, tool_call in ipairs(chunk.data) do
           if tool_call and tool_call.index then
             local found = false
@@ -944,7 +940,7 @@ function chat.append_to_streaming_message(reason, content, extra)
   if extra and extra ~= "" then
     display = display .. "\n" .. extra
   end
-  chat.update_streaming_message(display, true)
+  chat.update_streaming_message(display, "", true)
 end
 
 -- Allow cancelling current stream
