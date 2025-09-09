@@ -1,9 +1,14 @@
+---@class SessionPicker
+---@field private session_picker_win number | nil
 local M = {}
 
 -- Track the session picker window and buffer
+---@type number | nil
 local session_picker_win = nil
 
 -- Session picker using Telescope for better UX
+---Initialises the session picker and chooses the method based on configuration.
+---@return nil
 local function session_picker()
   local chat = require("neoai.chat")
   local keymap_conf = require("neoai.config").values.keymaps
@@ -22,6 +27,8 @@ local function session_picker()
   end
 end
 
+---Uses Telescope to present a session picker to the user.
+---@param sessions table[] List of session objects.
 function M.telescope_session_picker(sessions)
   local pickers = require("telescope.pickers")
   local finders = require("telescope.finders")
@@ -44,96 +51,98 @@ function M.telescope_session_picker(sessions)
   end
 
   pickers
-      .new({}, {
-        prompt_title = "NeoAI Sessions",
-        finder = finders.new_table({
-          results = session_entries,
-          entry_maker = function(entry)
-            return {
-              value = entry.value,
-              display = entry.display,
-              ordinal = entry.ordinal,
-            }
-          end,
-        }),
-        sorter = conf.generic_sorter({}),
-        attach_mappings = function(prompt_bufnr, map)
-          actions.select_default:replace(function()
-            actions.close(prompt_bufnr)
-            local selection = action_state.get_selected_entry()
-            if selection then
-              local session = selection.value
-              if not session.is_active then
-                chat.switch_session(session.id)
-                if chat.chat_state.is_open then
-                  chat.close()
-                  chat.open()
-                end
-              else
-                vim.notify("Session is already active", vim.log.levels.INFO)
+    .new({}, {
+      prompt_title = "NeoAI Sessions",
+      finder = finders.new_table({
+        results = session_entries,
+        entry_maker = function(entry)
+          return {
+            value = entry.value,
+            display = entry.display,
+            ordinal = entry.ordinal,
+          }
+        end,
+      }),
+      sorter = conf.generic_sorter({}),
+      attach_mappings = function(prompt_bufnr, map)
+        actions.select_default:replace(function()
+          actions.close(prompt_bufnr)
+          local selection = action_state.get_selected_entry()
+          if selection then
+            local session = selection.value
+            if not session.is_active then
+              chat.switch_session(session.id)
+              if chat.chat_state.is_open then
+                chat.close()
+                chat.open()
               end
+            else
+              vim.notify("Session is already active", vim.log.levels.INFO)
             end
-          end)
+          end
+        end)
 
-          -- Add custom mappings
-          map({ "i", "n" }, "<C-d>", function()
-            local selection = action_state.get_selected_entry()
-            if selection then
-              local session = selection.value
-              actions.close(prompt_bufnr)
-
-              vim.ui.input({ prompt = "Delete session '" .. session.title .. "'? (y/N): " }, function(input)
-                if input and input:lower() == "y" then
-                  chat.delete_session(session.id)
-                  -- Reopen picker
-                  vim.defer_fn(session_picker, 100)
-                end
-              end)
-            end
-          end)
-
-          map({ "i", "n" }, "<C-r>", function()
-            local selection = action_state.get_selected_entry()
-            if selection then
-              local session = selection.value
-              actions.close(prompt_bufnr)
-
-              vim.ui.input({
-                prompt = "New title for '" .. session.title .. "': ",
-                default = session.title,
-              }, function(input)
-                if input and input ~= "" then
-                  if session.is_active then
-                    chat.rename_session(input)
-                  else
-                    require("neoai.storage").update_session_title(session.id, input)
-                  end
-                  -- Reopen picker
-                  vim.defer_fn(session_picker, 100)
-                end
-              end)
-            end
-          end)
-
-          map({ "i", "n" }, "<C-n>", function()
+        -- Add custom mappings
+        map({ "i", "n" }, "<C-d>", function()
+          local selection = action_state.get_selected_entry()
+          if selection then
+            local session = selection.value
             actions.close(prompt_bufnr)
-            vim.ui.input({ prompt = "New session title: " }, function(input)
-              if input and input ~= "" then
-                chat.new_session(input)
-                if chat.chat_state.is_open then
-                  chat.close()
-                  chat.open()
-                end
+
+            vim.ui.input({ prompt = "Delete session '" .. session.title .. "'? (y/N): " }, function(input)
+              if input and input:lower() == "y" then
+                chat.delete_session(session.id)
+                -- Reopen picker
+                vim.defer_fn(session_picker, 100)
               end
             end)
-          end)
+          end
+        end)
 
-          return true
-        end,
-      })
-      :find()
+        map({ "i", "n" }, "<C-r>", function()
+          local selection = action_state.get_selected_entry()
+          if selection then
+            local session = selection.value
+            actions.close(prompt_bufnr)
+
+            vim.ui.input({
+              prompt = "New title for '" .. session.title .. "': ",
+              default = session.title,
+            }, function(input)
+              if input and input ~= "" then
+                if session.is_active then
+                  chat.rename_session(input)
+                else
+                  require("neoai.storage").update_session_title(session.id, input)
+                end
+                -- Reopen picker
+                vim.defer_fn(session_picker, 100)
+              end
+            end)
+          end
+        end)
+
+        map({ "i", "n" }, "<C-n>", function()
+          actions.close(prompt_bufnr)
+          vim.ui.input({ prompt = "New session title: " }, function(input)
+            if input and input ~= "" then
+              chat.new_session(input)
+              if chat.chat_state.is_open then
+                chat.close()
+                chat.open()
+              end
+            end
+          end)
+        end)
+
+        return true
+      end,
+    })
+    :find()
 end
 
+---Closes the currently active window, particularly the session picker window.
+---@return nil
 local close_window = function()
   local win = vim.api.nvim_get_current_win()
   if vim.api.nvim_win_is_valid(win) then
@@ -144,6 +153,8 @@ local close_window = function()
   end
 end
 
+---Presents a simple session picker using the default Neovim interface.
+---@param sessions table[] List of session objects.
 function M.simple_session_picker(sessions)
   local chat = require("neoai.chat")
 
@@ -188,6 +199,8 @@ function M.simple_session_picker(sessions)
   vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
   vim.bo[bufnr].modifiable = false
 
+  ---Retrieves the session object located at the current cursor position.
+  ---@return table | nil
   local function get_session_at_cursor()
     local line_num = vim.api.nvim_win_get_cursor(0)[1]
     return session_lines[line_num]
@@ -260,6 +273,8 @@ function M.simple_session_picker(sessions)
 end
 
 -- Entry point
+---Initiates the session picking process.
+---@return nil
 function M.pick_session()
   session_picker()
 end

@@ -718,7 +718,7 @@ function chat.stream_ai_response(messages)
       table.insert(per_call, string.format("- %s: %s", name ~= "" and name or "function", human_bytes(size)))
     end
 
-    local header = "Preparing tool calls…"
+    local header = "\nPreparing tool calls…"
     if #per_call > 0 then
       header = header .. string.format(" (total %s)", human_bytes(total))
     end
@@ -899,7 +899,7 @@ function chat.update_streaming_message(reason, content, append)
   -- Add tool preparation status above other AI or reasoning content
 
   if reason and reason ~= "" then
-    display = display .. "<think>\n" .. reason .. "\n</think>\n\n"
+    display = display .. reason .. "\n\n"
   end
   if content and content ~= "" then
     display = display .. tostring(content)
@@ -936,7 +936,7 @@ function chat.append_to_streaming_message(reason, content, extra)
   end
   local display = ""
   if reason and reason ~= "" then
-    display = display .. "<think>\n" .. reason .. "\n</think>\n\n"
+    display = display .. reason .. "\n\n"
   end
   if content and content ~= "" then
     display = display .. content
