@@ -16,9 +16,8 @@ local function normalise_code_block(lines)
   end
 
   local content = table.concat(lines, "\n")
-  -- Remove block comments (non-greedy)
-  content = content:gsub("/%*.-%*/", ""):gsub("<!--.- -->", ""):gsub("%-%-%[%[.-%]%]", "")
-  -- Remove single-line comments
+  content = content:lower():gsub("/%*.-%*/", ""):gsub("<!--.- -->", ""):gsub("%-%-%[%[.-%]%]", "")
+  -- Remove single-line comments while making the content lowercase
   content = content:gsub("//[^\n]*", ""):gsub("#[^\n]*", ""):gsub("%-%-[^\n]*", "")
   -- Normalise whitespace (newlines, tabs, multiple spaces) to a single space
   content = content:gsub("%s+", " ")
@@ -169,6 +168,7 @@ end
 ---@param end_hint integer|nil The line to end searching at (1-based).
 ---@return integer|nil, integer|nil The start and end line numbers of the match, or nil.
 local function find_normalised_text_match(buffer_lines, block_lines_to_find, start_hint, end_hint)
+  local fuzziness_allowed = math.floor(#block_lines_to_find * 0.1) -- Allow a small percentage of lines to not match exactly
   local normalised_target = normalise_code_block(block_lines_to_find)
   if normalised_target == "" then
     return nil, nil -- Cannot match an empty or comment-only block
@@ -182,7 +182,7 @@ local function find_normalised_text_match(buffer_lines, block_lines_to_find, sta
   local max_scan_lines = #block_lines_to_find + line_count_tolerance
 
   for i = start_search, end_search do
-    for L = min_scan_lines, max_scan_lines do
+    for L = min_scan_lines - fuzziness_allowed, max_scan_lines + fuzziness_allowed do
       if i + L - 1 > #buffer_lines then
         break
       end
@@ -226,7 +226,7 @@ function M.find_block_location(buffer_lines, block_lines_to_find, start_hint, en
     for i = start_search, end_search do
       local match = true
       for j = 1, #block_lines_to_find do
-        if buffer_lines[i + j - 1] ~= block_lines_to_find[j] then
+        if buffer_lines[i + j - 1]:lower() ~= block_lines_to_find[j]:lower() then
           match = false
           break
         end
@@ -247,7 +247,7 @@ function M.find_block_location(buffer_lines, block_lines_to_find, start_hint, en
     end
   end
 
-  -- Stage 3: Normalised text match. A robust fallback.
+  -- Stage 3: Normalised text match with fuzzy matching. A robust fallback.
   do
     local start_line, end_line = find_normalised_text_match(buffer_lines, block_lines_to_find, start_hint, end_hint)
     if start_line then

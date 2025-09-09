@@ -1,5 +1,8 @@
+---@class FilePicker
 local M = {}
 
+---Select a file using Telescope and insert its path at the cursor.
+---@return nil
 function M.select_file()
   local ok, telescope_builtin = pcall(require, "telescope.builtin")
   if not ok then
@@ -28,7 +31,9 @@ function M.select_file()
           -- Current line and bounds
           local line = vim.api.nvim_buf_get_lines(bufnr, row - 1, row, true)[1] or ""
           local line_len = #line
-          if col > line_len then col = line_len end
+          if col > line_len then
+            col = line_len
+          end
 
           -- Advance insertion point to the end of the contiguous word to the right (if any)
           local j = col
@@ -41,7 +46,9 @@ function M.select_file()
             end
           end
           local insert_col = j + 1
-          if insert_col > line_len then insert_col = line_len end
+          if insert_col > line_len then
+            insert_col = line_len
+          end
 
           -- Always insert: space + `filepath` + space
           local insert_text = " `" .. filepath .. "` "
