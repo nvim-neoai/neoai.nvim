@@ -393,7 +393,7 @@ function chat.send_message()
   if chat.chat_state.streaming_active and chat.chat_state.user_feedback then
     vim.notify("Pending diffs discarded. Continuing...", vim.log.levels.INFO)
 
-    -- THE FIX PART 1: Invalidate the current waiting period.
+    -- Invalidate the current waiting period.
     -- By incrementing the ID, we ensure that the old autocmd callback,
     -- which is still holding the *previous* ID, will know it is stale.
     chat.chat_state._diff_await_id = (chat.chat_state._diff_await_id or 0) + 1
@@ -589,12 +589,12 @@ function chat.get_tool_calls(tool_schemas)
       {}
     )
 
-    -- THE FIX PART 2: Create a new, unique waiting period.
+    -- Create a new, unique waiting period.
     chat.chat_state._diff_await_id = (chat.chat_state._diff_await_id or 0) + 1
     local unique_await_name = "NeoAIInlineDiffAwait_" .. tostring(chat.chat_state._diff_await_id)
     -- Create a unique group for each wait
-    local current_await_id = chat.chat_state._diff_await_id
-    grp = vim.api.nvim_create_augroup(unique_await_name, { clear = true })
+    local unique_await_name = "NeoAIInlineDiffAwait_" .. tostring(chat.chat_state._diff_await_id)
+
     vim.api.nvim_create_autocmd("User", {
       group = grp,
       pattern = "NeoAIInlineDiffClosed",
@@ -618,7 +618,7 @@ function chat.get_tool_calls(tool_schemas)
     })
     -- Reuse the same await ID to ensure no new AI action until resolution
 
-    local grp = vim.api.nvim_create_augroup(unique_await_name, { clear = true })
+    vim.api.nvim_create_augroup(unique_await_name, { clear = true })
     vim.api.nvim_create_autocmd("User", {
       group = grp,
       pattern = "NeoAIInlineDiffClosed",
@@ -721,7 +721,8 @@ function chat.stream_ai_response(messages)
     if body ~= "" then
       display = display .. "\n" .. body
     end
-    chat.update_streaming_message(reason, display)
+    chat.tool_prep_status = display -- Cache tool preparation for continuous rendering
+    chat.update_streaming_message(reason, content) -- Continue normal content update post-tool-prep
   end
 
   if chat.chat_state._timeout_timer then
@@ -762,8 +763,9 @@ function chat.stream_ai_response(messages)
   end
 
   thinking_timeout_timer:start(timeout_duration_s * 1000, 0, vim.schedule_wrap(handle_timeout))
-
   api.stream(messages, function(chunk)
+    chat.tool_prep_status = nil -- Reset tool preparation status at stream end or during error completion
+
     if not saw_first_token then
       saw_first_token = true
       stop_thinking_animation()
@@ -886,6 +888,11 @@ function chat.update_streaming_message(reason, content)
     return
   end
   local display = ""
+  -- Add tool preparation status above other AI or reasoning content
+  if chat.tool_prep_status and chat.tool_prep_status ~= "" then
+    display = display .. "<toolprep>\n" .. chat.tool_prep_status .. "\n</toolprep>\n\n"
+  end
+
   if reason and reason ~= "" then
     display = display .. "<think>\n" .. reason .. "\n</think>\n\n"
   end
