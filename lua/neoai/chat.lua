@@ -397,12 +397,9 @@ end
 function chat.send_message()
   if chat.chat_state.streaming_active and chat.chat_state.user_feedback then
     vim.notify("Pending diffs discarded. Continuing...", vim.log.levels.INFO)
-
-    -- Invalidate the current waiting period.
-    -- By incrementing the ID, we ensure that the old autocmd callback,
-    -- which is still holding the *previous* ID, will know it is stale.
+    -- Increment the awaited ID to create a new unique waiting period.
     chat.chat_state._diff_await_id = (chat.chat_state._diff_await_id or 0) + 1
-    local unique_await_name = "NeoAIInlineDiffAwait_" .. tostring(chat.chat_state._diff_await_id)
+    local current_await_id = chat.chat_state._diff_await_id
 
     -- Clean up the listener and revert the buffer.
     pcall(vim.api.nvim_del_augroup_by_name, "NeoAIInlineDiffAwait")
@@ -588,7 +585,7 @@ function chat.get_tool_calls(tool_schemas)
     end
   end
 
-  if vim.g.neoai_inline_diff_active then
+  if vim.g.neoai_inline_diff_active and chat.chat_state._diff_await_id ~= 0 then
     chat.add_message(
       MESSAGE_TYPES.SYSTEM,
       "Awaiting your review in the inline diff. The assistant will resume once you finish.",
@@ -597,15 +594,17 @@ function chat.get_tool_calls(tool_schemas)
 
     -- Create a new, unique waiting period.
     chat.chat_state._diff_await_id = (chat.chat_state._diff_await_id or 0) + 1
-    local unique_await_name = "NeoAIInlineDiffAwait_" .. tostring(chat.chat_state._diff_await_id)
-    -- Create a unique group for each wait
-    local unique_await_name = "NeoAIInlineDiffAwait_" .. tostring(chat.chat_state._diff_await_id)
+    -- Reuse the incremented awaited ID to ensure consistency during the wait
+    local current_await_id = chat.chat_state._diff_await_id
+    local unique_await_name = "NeoAIInlineDiffAwait_" .. tostring(current_await_id)
 
+    local grp = vim.api.nvim_create_augroup(unique_await_name, { clear = true })
     vim.api.nvim_create_autocmd("User", {
       group = grp,
       pattern = "NeoAIInlineDiffClosed",
       once = true,
       callback = function(ev)
+        -- Ensure the awaited ID matches to proceed
         if chat.chat_state._diff_await_id ~= current_await_id then
           return
         end
@@ -617,6 +616,7 @@ function chat.get_tool_calls(tool_schemas)
         end
         chat.add_message(MESSAGE_TYPES.SYSTEM, msg, {})
         vim.g.neoai_inline_diff_active = false
+        chat.chat_state.streaming_active = true
         apply_delay(function()
           chat.send_to_ai()
         end)
@@ -727,7 +727,9 @@ function chat.stream_ai_response(messages)
     if body ~= "" then
       display = display .. "\n" .. body
     end
-    chat.append_to_streaming_message(reason, content, display) -- Append tool preparation to the existing content
+    if type(content) ~= "boolean" then
+      chat.append_to_streaming_message(reason, content, "")
+    end
   end
 
   if chat.chat_state._timeout_timer then
