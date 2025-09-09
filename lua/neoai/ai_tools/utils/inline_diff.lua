@@ -277,7 +277,7 @@ function M.apply(abs_path, old_lines, new_lines, opts)
         if not self.event_fired then
           self.event_fired = true
           -- Mark review finished (no more hunks). User may still :w to save.
-          vim.g.neoai_inline_diff_active = false
+          -- vim.g.neoai_inline_diff_active = false
           vim.schedule(function()
             pcall(vim.api.nvim_exec_autocmds, "User", {
               pattern = "NeoAIInlineDiffClosed",
@@ -324,7 +324,7 @@ function M.apply(abs_path, old_lines, new_lines, opts)
     self:cleanup()
     if not self.event_fired then
       self.event_fired = true
-      vim.g.neoai_inline_diff_active = false
+      -- vim.g.neoai_inline_diff_active = false
       vim.schedule(function()
         pcall(vim.api.nvim_exec_autocmds, "User", {
           pattern = "NeoAIInlineDiffClosed",
@@ -375,7 +375,7 @@ function M.apply(abs_path, old_lines, new_lines, opts)
         State:cleanup()
         if not State.event_fired then
           State.event_fired = true
-          vim.g.neoai_inline_diff_active = false
+          -- vim.g.neoai_inline_diff_active = false
           vim.schedule(function()
             pcall(vim.api.nvim_exec_autocmds, "User", {
               pattern = "NeoAIInlineDiffClosed",
@@ -396,7 +396,7 @@ function M.apply(abs_path, old_lines, new_lines, opts)
         State:cleanup()
         if not State.event_fired then
           State.event_fired = true
-          vim.g.neoai_inline_diff_active = false
+          -- vim.g.neoai_inline_diff_active = false
           vim.schedule(function()
             pcall(vim.api.nvim_exec_autocmds, "User", {
               pattern = "NeoAIInlineDiffClosed",

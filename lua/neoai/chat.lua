@@ -572,7 +572,7 @@ function chat.get_tool_calls(tool_schemas)
           if content == "" then
             content = "No response"
           end
-          chat.add_message(MESSAGE_TYPES.TOOL, content, meta, schema.id)
+          chat.add_message(MESSAGE_TYPES.TOOL, tostring(content), meta, schema.id)
           break
         end
       end
@@ -782,7 +782,7 @@ function chat.stream_ai_response(messages)
 
     if chunk.type == "content" and chunk.data ~= "" then
       content = content .. chunk.data
-      chat.update_streaming_message(reason, tostring(content), false)
+      chat.update_streaming_message(reason, tostring(content or ""), false)
     elseif chunk.type == "reasoning" and chunk.data ~= "" then
       reason = reason .. chunk.data
       chat.update_streaming_message(reason, tostring(content), false)
