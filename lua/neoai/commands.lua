@@ -2,6 +2,7 @@ local M = {}
 local chat = require("neoai.chat")
 
 --- Setup user commands for NeoAI chat
+--- @return nil
 function M.setup()
   vim.api.nvim_create_user_command("NeoAIChat", function()
     chat.open()
@@ -15,15 +16,18 @@ function M.setup()
     chat.clear_session()
   end, { desc = "Clear current NeoAI Chat session" })
 
-  -- Session management commands
-  vim.api.nvim_create_user_command("NeoAINewSession", function(opts)
-    local title = opts.args ~= "" and opts.args or nil
-    chat.new_session(title)
-    if chat.chat_state.is_open then
-      chat.close()
-      chat.open()
-    end
-  end, { desc = "Create new NeoAI Chat session", nargs = "?" })
+  vim.api.nvim_create_user_command(
+    "NeoAINewSession", --- @param opts table Optional arguments including `args`
+    function(opts)
+      local title = opts.args ~= "" and opts.args or nil
+      chat.new_session(title)
+      if chat.chat_state.is_open then
+        chat.close()
+        chat.open()
+      end
+    end,
+    { desc = "Create new NeoAI Chat session", nargs = "?" }
+  )
 
   vim.api.nvim_create_user_command("NeoAISessionList", function()
     require("neoai.session_picker").pick_session()
