@@ -1,7 +1,5 @@
 local chat = {}
 
-local edit = require("neoai.ai_tools.edit")
-
 -- Ensure that the discard_all_diffs function is accessible
 local ai_tools = require("neoai.ai_tools")
 local prompt = require("neoai.prompt")
@@ -53,6 +51,7 @@ end
 local function ts_resume(bufnr)
   local ok, ts = pcall(require, "vim.treesitter")
   if ok and bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+    ---@diagnostic disable-next-line: undefined-field
     if ts.start then
       -- Reattach markdown parser
       pcall(ts.start, bufnr, "markdown")
@@ -128,6 +127,7 @@ local function start_thinking_animation()
     virt_text_pos = "eol",
   })
   st.timer = vim.loop.new_timer()
+  ---@diagnostic disable-next-line: undefined-field
   st.timer:start(
     0,
     120,
@@ -175,10 +175,6 @@ end
 -- Ctrl-C cancel listener (global) so it works even if mappings are bypassed
 local CTRL_C_NS = vim.api.nvim_create_namespace("NeoAICtrlC")
 local CTRL_C_KEY = vim.api.nvim_replace_termcodes("<C-c>", true, false, true)
-
-local function log(variable, name)
-  print(name .. " = ", vim.inspect(variable))
-end
 
 local function enable_ctrl_c_cancel()
   if not chat.chat_state then
@@ -339,7 +335,7 @@ end
 ---@param content string
 ---@param metadata table | nil
 ---@param tool_call_id string | nil
----@param tool_calls string | nil
+---@param tool_calls any
 function chat.add_message(type, content, metadata, tool_call_id, tool_calls)
   if type == MESSAGE_TYPES.USER then
     chat.chat_state.user_feedback = true -- Track that feedback occurred
@@ -582,7 +578,10 @@ function chat.get_tool_calls(tool_schemas)
     elseif result == 2 then
       -- User rejected
       chat.add_message(MESSAGE_TYPES.SYSTEM, "User rejected diffs.", {})
-      require("neoai.ai_tools.edit").discard_all_diffs()
+      local ok_edit, edit_mod = pcall(require, "neoai.ai_tools.edit")
+      if ok_edit and edit_mod and type(edit_mod.discard_all_diffs) == "function" then
+        edit_mod.discard_all_diffs()
+      end
       apply_delay(function()
         chat.send_to_ai()
       end)
@@ -626,7 +625,6 @@ function chat.stream_ai_response(messages)
   local reason, content, tool_calls_response = "", "", {}
   local start_time = os.time()
   local saw_first_token = false
-  local tool_prep_seen = false
   local has_completed = false
 
   local function human_bytes(n)
@@ -664,11 +662,7 @@ function chat.stream_ai_response(messages)
     if body ~= "" then
       display = display .. "\n" .. body
     end
-    if type(content) ~= "boolean" and content ~= true and content ~= "" then
-      if type(content) ~= "boolean" then
-        chat.append_to_streaming_message(reason, content, "")
-      end
-    end
+    return display
   end
 
   if chat.chat_state._timeout_timer then
@@ -727,7 +721,6 @@ function chat.stream_ai_response(messages)
       chat.update_streaming_message(reason, tostring(content), false)
     elseif chunk.type == "tool_calls" then
       if chunk.data and type(chunk.data) == "table" then
-        tool_prep_seen = true
         for _, tool_call in ipairs(chunk.data) do
           if tool_call and tool_call.index then
             local found = false
@@ -762,7 +755,7 @@ function chat.stream_ai_response(messages)
           end
         end
         local prep_status = render_tool_prep_status()
-        chat.update_streaming_message(prep_status, true)
+        chat.update_streaming_message(prep_status, tostring(content or ""), false)
       end
     end
   end, function()
@@ -876,17 +869,14 @@ function chat.append_to_streaming_message(reason, content, extra)
   if not chat.chat_state.is_open or not chat.chat_state.streaming_active then
     return
   end
-  local display = ""
-  if reason and reason ~= "" then
-    display = display .. reason .. "\n\n"
-  end
-  if content and content ~= "" then
-    display = display .. content
-  end
+  local final_content = content or ""
   if type(extra) == "string" and extra ~= "" then
-    display = display .. "\n" .. extra
+    if final_content ~= "" then
+      final_content = final_content .. "\n"
+    end
+    final_content = final_content .. extra
   end
-  chat.update_streaming_message(display, true)
+  chat.update_streaming_message(reason, final_content, true)
 end
 
 -- Allow cancelling current stream
