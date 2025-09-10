@@ -664,7 +664,7 @@ function chat.stream_ai_response(messages)
     if body ~= "" then
       display = display .. "\n" .. body
     end
-    if type(content) ~= "boolean" and content ~= true then
+    if type(content) ~= "boolean" and content ~= true and content ~= "" then
       if type(content) ~= "boolean" then
         chat.append_to_streaming_message(reason, content, "")
       end
@@ -761,7 +761,8 @@ function chat.stream_ai_response(messages)
             end
           end
         end
-        render_tool_prep_status()
+        local prep_status = render_tool_prep_status()
+        chat.update_streaming_message(prep_status, true)
       end
     end
   end, function()
