@@ -1,10 +1,17 @@
--- lua/neoai/ai_tools/edit/find.lua
+-- lua/neoai/ai_tools/utils/find.lua
 
 local M = {}
 
 --[[
   UTILITY FUNCTIONS
 --]]
+
+--- Utility to trim whitespace from a string.
+---@param s string
+---@return string
+local function trim(s)
+  return s:gsub("^%s+", ""):gsub("%s+$", "")
+end
 
 --- Normalises a block of code for fuzzy matching.
 --- Removes comments and collapses whitespace.
@@ -26,7 +33,75 @@ local function normalise_code_block(lines)
 end
 
 --[[
-  TREE-SITTER BASED SEARCH (STAGE 2)
+  LINE-TRIMMED AND ANCHOR MATCHING (STAGES 2 & 3)
+--]]
+
+--- Stage 2: Attempt to find a block by matching lines with whitespace trimmed.
+--- This is resilient to changes in indentation.
+---@param buffer_lines table The lines of the entire buffer.
+---@param block_lines_to_find table The lines of the block to find.
+---@param start_hint integer|nil The line to start searching from (1-based).
+---@param end_hint integer|nil The line to end searching at (1-based).
+---@return integer|nil, integer|nil The start and end line numbers of the match, or nil.
+local function find_line_trimmed_match(buffer_lines, block_lines_to_find, start_hint, end_hint)
+  local start_search = start_hint or 1
+  local end_search = end_hint or #buffer_lines
+  end_search = math.min(end_search, #buffer_lines - #block_lines_to_find + 1)
+
+  for i = start_search, end_search do
+    local match = true
+    for j = 1, #block_lines_to_find do
+      if trim(buffer_lines[i + j - 1]) ~= trim(block_lines_to_find[j]) then
+        match = false
+        break
+      end
+    end
+    if match then
+      vim.notify("[AI] Found block via line-trimmed match.", vim.log.levels.DEBUG, { title = "NeoAI" })
+      return i, i + #block_lines_to_find - 1
+    end
+  end
+
+  return nil, nil
+end
+
+--- Stage 3: Attempt to find a block using its first and last lines as anchors.
+--- This is resilient to minor changes within the block.
+---@param buffer_lines table The lines of the entire buffer.
+---@param block_lines_to_find table The lines of the block to find.
+---@param start_hint integer|nil The line to start searching from (1-based).
+---@param end_hint integer|nil The line to end searching at (1-based).
+---@return integer|nil, integer|nil The start and end line numbers of the match, or nil.
+local function find_block_anchor_match(buffer_lines, block_lines_to_find, start_hint, end_hint)
+  -- This strategy is only effective for blocks of 3 or more lines.
+  if #block_lines_to_find < 3 then
+    return nil, nil
+  end
+
+  local first_line_search = trim(block_lines_to_find[1])
+  local last_line_search = trim(block_lines_to_find[#block_lines_to_find])
+  local block_size = #block_lines_to_find
+
+  local start_search = start_hint or 1
+  local end_search = end_hint or #buffer_lines
+  end_search = math.min(end_search, #buffer_lines - block_size + 1)
+
+  for i = start_search, end_search do
+    -- Check if the first line anchor matches
+    if trim(buffer_lines[i]) == first_line_search then
+      -- If it does, check if the last line anchor matches at the expected position
+      if trim(buffer_lines[i + block_size - 1]) == last_line_search then
+        vim.notify("[AI] Found block via block-anchor match.", vim.log.levels.DEBUG, { title = "NeoAI" })
+        return i, i + block_size - 1
+      end
+    end
+  end
+
+  return nil, nil
+end
+
+--[[
+  TREE-SITTER BASED SEARCH (STAGE 4)
 --]]
 
 local ts_utils = vim.treesitter
@@ -158,7 +233,7 @@ local function find_ts_match(buffer_lines, block_lines_to_find, start_hint, end_
 end
 
 --[[
-  NORMALISED TEXT SEARCH (STAGE 3)
+  NORMALISED TEXT SEARCH (STAGE 5)
 --]]
 
 --- Attempt to find a block using normalised text matching.
@@ -217,7 +292,7 @@ function M.find_block_location(buffer_lines, block_lines_to_find, start_hint, en
     return nil, nil
   end
 
-  -- Stage 1: Exact match. Fast and reliable if the AI is accurate.
+  -- Stage 1: Exact match (case-insensitive). Fast and reliable if the AI is accurate.
   do
     local start_search = start_hint or 1
     local end_search = end_hint or #buffer_lines
@@ -238,7 +313,23 @@ function M.find_block_location(buffer_lines, block_lines_to_find, start_hint, en
     end
   end
 
-  -- Stage 2: Tree-sitter structural match. Resilient to formatting and comment changes.
+  -- Stage 2: Line-trimmed match. Resilient to indentation changes.
+  do
+    local start_line, end_line = find_line_trimmed_match(buffer_lines, block_lines_to_find, start_hint, end_hint)
+    if start_line then
+      return start_line, end_line
+    end
+  end
+
+  -- Stage 3: Block anchor match. Resilient to small changes inside the block.
+  do
+    local start_line, end_line = find_block_anchor_match(buffer_lines, block_lines_to_find, start_hint, end_hint)
+    if start_line then
+      return start_line, end_line
+    end
+  end
+
+  -- Stage 4: Tree-sitter structural match. Resilient to formatting and comment changes.
   do
     local ok, start_line, end_line = pcall(find_ts_match, buffer_lines, block_lines_to_find, start_hint, end_hint)
     if ok and start_line then
@@ -247,7 +338,7 @@ function M.find_block_location(buffer_lines, block_lines_to_find, start_hint, en
     end
   end
 
-  -- Stage 3: Normalised text match with fuzzy matching. A robust fallback.
+  -- Stage 5: Normalised text match with fuzzy matching. A robust fallback.
   do
     local start_line, end_line = find_normalised_text_match(buffer_lines, block_lines_to_find, start_hint, end_hint)
     if start_line then
