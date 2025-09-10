@@ -48,6 +48,31 @@ local function unified_diff(old_lines, new_lines)
   return diff or "(no changes)"
 end
 
+--- Converts a line range to a byte offset range within a string.
+---@param content_lines table The original content as a table of lines.
+---@param start_line integer The 1-based start line of the block.
+---@param end_line integer The 1-based end line of the block.
+---@return integer, integer The 1-based start and end byte offsets.
+local function convert_lines_to_offsets(content_lines, start_line, end_line)
+  local start_offset = 1
+  for i = 1, start_line - 1 do
+    start_offset = start_offset + #content_lines[i] + 1 -- +1 for the newline character
+  end
+
+  local end_offset = start_offset - 1 -- Start from the beginning of the start_line content
+  for i = start_line, end_line do
+    end_offset = end_offset + #content_lines[i] + 1 -- +1 for the newline character
+  end
+
+  -- For insertions (end_line < start_line), the end_offset should be one less than start_offset,
+  -- indicating a zero-length replacement.
+  if end_line < start_line then
+    return start_offset, start_offset - 1
+  end
+
+  return start_offset, end_offset
+end
+
 -- This function is called from chat.lua to close an open diffview window.
 --- Discard all diffs and revert buffer changes.
 ---@return string: A status message.
@@ -184,10 +209,11 @@ M.run = function(args)
     end
   end
 
-  content = normalise_eol(content)
-  local orig_lines = split_lines(content)
-  strip_cr(orig_lines)
+  local original_content_str = normalise_eol(content)
+  local orig_lines = split_lines(original_content_str)
+  strip_cr(orig_lines) -- Strip CR just for finder, original_content_str keeps \n
 
+  -- NEW: Order-invariant algorithm using byte offsets
   local planned_edits = {}
   for i, edit in ipairs(edits) do
     local old_lines = split_lines(normalise_eol(edit.old_string))
@@ -204,66 +230,72 @@ M.run = function(args)
 
     if not start_line then
       return string.format(
-        "Edit %d: Could not find a matching block for 'old_string'. The code may have changed or the string is inaccurate. All matching strategies (Exact, Tree-sitter, Normalised Text) failed.",
+        "Edit %d: Could not find a matching block for 'old_string'. The code may have changed or the string is inaccurate. All matching strategies failed.",
         i
       )
     end
 
+    -- Convert line range to byte offsets in the original content string
+    local start_offset, end_offset = convert_lines_to_offsets(orig_lines, start_line, end_line)
+
+    -- Normalise new_string and handle indentation
     local new_lines = split_lines(normalise_eol(edit.new_string))
     strip_cr(new_lines)
 
-    local adjusted_new_lines = {}
     local indent = ""
-    -- Check if the found block exists in the buffer to get its indentation.
     if start_line > 0 and start_line <= #orig_lines then
       indent = orig_lines[start_line]:match("^%s*") or ""
     end
 
+    local adjusted_new_lines = {}
     for _, line in ipairs(new_lines) do
-      -- Only add indentation if the line is not empty.
       if line:match("%S") then
         table.insert(adjusted_new_lines, indent .. line)
       else
         table.insert(adjusted_new_lines, "")
       end
     end
+    local final_new_string = table.concat(adjusted_new_lines, "\n")
 
     table.insert(planned_edits, {
-      start_line = start_line,
-      end_line = end_line,
-      new_lines = adjusted_new_lines, -- Use the indentation-adjusted lines
+      start_offset = start_offset,
+      end_offset = end_offset,
+      new_string = final_new_string,
     })
   end
 
-  table.sort(planned_edits, function(a, b)
-    return a.start_line > b.start_line
-  end)
-
-  local working_lines = vim.deepcopy(orig_lines)
-  local total_replacements = 0
-
-  for _, planned_edit in ipairs(planned_edits) do
-    local num_to_remove = planned_edit.end_line - planned_edit.start_line + 1
-    -- Handle insertion case where end_line < start_line
-    if num_to_remove < 0 then
-      num_to_remove = 0
-    end
-
-    for _ = 1, num_to_remove do
-      table.remove(working_lines, planned_edit.start_line)
-    end
-
-    for i, line in ipairs(planned_edit.new_lines) do
-      table.insert(working_lines, planned_edit.start_line - 1 + i, line)
-    end
-    total_replacements = total_replacements + 1
-  end
-
-  if total_replacements == 0 then
+  if #planned_edits == 0 then
     return string.format("No replacements made in %s.", rel_path)
   end
 
-  local updated_lines = working_lines
+  -- Sort edits by start offset, making them order-invariant
+  table.sort(planned_edits, function(a, b)
+    return a.start_offset < b.start_offset
+  end)
+
+  -- Rebuild the file from scratch using the sorted, offset-based edits
+  local result_parts = {}
+  local last_pos = 1
+  for _, planned_edit in ipairs(planned_edits) do
+    -- Safety check for overlapping edits, which are ambiguous.
+    if planned_edit.start_offset < last_pos then
+      return string.format(
+        "Edit application failed: An overlapping edit was detected. The AI tried to modify the same piece of code twice. Please review the request."
+      )
+    end
+
+    -- Add the slice of original content before this edit
+    table.insert(result_parts, original_content_str:sub(last_pos, planned_edit.start_offset - 1))
+    -- Add the new content for this edit
+    table.insert(result_parts, planned_edit.new_string)
+    -- Move the cursor past the replaced section
+    last_pos = planned_edit.end_offset + 1
+  end
+  -- Add any remaining content from the end of the original file
+  table.insert(result_parts, original_content_str:sub(last_pos))
+
+  local updated_content = table.concat(result_parts)
+  local updated_lines = split_lines(updated_content)
 
   local uis = vim.api.nvim_list_uis()
   if not uis or #uis == 0 then
@@ -285,10 +317,9 @@ M.run = function(args)
 
     local summary
     if file_exists then
-      summary = string.format("Applied %d replacement(s) to %s (auto-approved, headless)", total_replacements, rel_path)
+      summary = string.format("Applied %d replacement(s) to %s (auto-approved, headless)", #planned_edits, rel_path)
     else
-      summary =
-        string.format("Created %s with %d replacement(s) (auto-approved, headless)", rel_path, total_replacements)
+      summary = string.format("Created %s with %d replacement(s) (auto-approved, headless)", #planned_edits, rel_path)
     end
     local diff_text = unified_diff(orig_lines, updated_lines)
     local diag_tool = require("neoai.ai_tools.lsp_diagnostic")
