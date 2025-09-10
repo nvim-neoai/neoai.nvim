@@ -1,5 +1,3 @@
--- lua/neoai/ai_tools/edit.lua
-
 local utils = require("neoai.ai_tools.utils")
 -- The finder module now handles all search logic.
 local finder = require("neoai.ai_tools.utils.find")
@@ -268,7 +266,7 @@ M.run = function(args)
       bufnr = bufnr_from_list or vim.fn.bufadd(abs_path),
       original_lines = orig_lines,
     }
-    vim.api.nvim_command("write") -- Autosave after resolving diffs
+    -- Do not autosave here; wait for the user to review and write or cancel in the inline diff UI.
     return msg
   else
     -- ... fallback write logic

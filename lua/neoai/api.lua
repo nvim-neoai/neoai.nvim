@@ -40,6 +40,12 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
   }
 
   local payload = vim.fn.json_encode(merge_tables(basic_payload, conf.additional_kwargs or {}))
+
+  -- Optional debug: show the exact JSON payload being sent to curl
+  if conf.debug_payload then
+    vim.notify("NeoAI: Sending JSON payload to curl (stream):\n" .. payload, vim.log.levels.DEBUG, { title = "NeoAI" })
+  end
+
   local api_key_header = conf.api_key_header or "Authorization"
   local api_key_format = conf.api_key_format or "Bearer %s"
   local api_key_value = string.format(api_key_format, conf.api_key)

@@ -240,8 +240,32 @@ function chat.setup()
     _timeout_timer = nil,
     _ts_suspended = false,
     thinking = { active = false, timer = nil, extmark_id = nil, frame = 1 },
-    _diff_await_id = 0, -- This is necessary for the fix.
+    _diff_await_id = 0, -- Used to gate resuming until user reviews inline diff
   }
+
+  -- Autocmd: resume only after inline diff review completes
+  local aug = vim.api.nvim_create_augroup("NeoAI_InlineDiff_Chat", { clear = true })
+  vim.api.nvim_create_autocmd("User", {
+    group = aug,
+    pattern = "NeoAIInlineDiffClosed",
+    callback = function(args)
+      if not chat.chat_state or chat.chat_state._diff_await_id == 0 then
+        return
+      end
+      local action = args and args.data and args.data.action or "unknown"
+      if action == "cancelled" then
+        chat.add_message(MESSAGE_TYPES.SYSTEM, "User rejected diffs.", {})
+      else
+        chat.add_message(MESSAGE_TYPES.SYSTEM, "User approved diffs.", {})
+      end
+      -- Clear await gate and resume
+      chat.chat_state._diff_await_id = 0
+      vim.g.neoai_inline_diff_active = false
+      apply_delay(function()
+        chat.send_to_ai()
+      end)
+    end,
+  })
 
   -- Initialise storage backend
   local success = storage.init(chat.chat_state.config)
@@ -551,6 +575,12 @@ function chat.get_tool_calls(tool_schemas)
             content = "No response"
           end
           chat.add_message(MESSAGE_TYPES.TOOL, tostring(content), meta, schema.id)
+
+          -- If the Edit tool opened an inline diff, set an await gate so we don't auto-proceed.
+          if fn.name == "Edit" and vim.g.neoai_inline_diff_active then
+            chat.chat_state._diff_await_id = vim.loop and vim.loop.hrtime and vim.loop.hrtime() or (os.time())
+          end
+
           break
         end
       end
@@ -566,29 +596,12 @@ function chat.get_tool_calls(tool_schemas)
   if vim.g.neoai_inline_diff_active and chat.chat_state._diff_await_id ~= 0 then
     chat.add_message(
       MESSAGE_TYPES.SYSTEM,
-      "Awaiting your review in the inline diff. The assistant will resume once you approve or reject it.",
+      "Awaiting your review in the inline diff. The assistant will resume once you finish reviewing.",
       {}
     )
-
-    -- Wait for user approval
-    local result = vim.fn.inputlist({ "Choose an action: ", "1. Approve Diffs", "2. Reject Diffs" })
-    if result == 1 then
-      -- User approved
-      chat.add_message(MESSAGE_TYPES.SYSTEM, "User approved diffs.", {})
-      chat.chat_state.streaming_active = true
-      apply_delay(function()
-        chat.send_to_ai()
-      end)
-    elseif result == 2 then
-      -- User rejected
-      chat.add_message(MESSAGE_TYPES.SYSTEM, "User rejected diffs.", {})
-      require("neoai.ai_tools.edit").discard_all_diffs()
-      apply_delay(function()
-        chat.send_to_ai()
-      end)
-    end
-
-    vim.g.neoai_inline_diff_active = false
+    -- No active streaming anymore while waiting for review
+    chat.chat_state.streaming_active = false
+    -- Do not proceed now; we'll resume on NeoAIInlineDiffClosed autocmd.
     return
   end
 
@@ -762,7 +775,7 @@ function chat.stream_ai_response(messages)
           end
         end
         local prep_status = render_tool_prep_status()
-        chat.update_streaming_message(prep_status, true)
+        chat.update_streaming_message(prep_status or "", "", true)
       end
     end
   end, function()
@@ -876,17 +889,11 @@ function chat.append_to_streaming_message(reason, content, extra)
   if not chat.chat_state.is_open or not chat.chat_state.streaming_active then
     return
   end
-  local display = ""
-  if reason and reason ~= "" then
-    display = display .. reason .. "\n\n"
-  end
-  if content and content ~= "" then
-    display = display .. content
-  end
+  local combined = content or ""
   if type(extra) == "string" and extra ~= "" then
-    display = display .. "\n" .. extra
+    combined = (combined ~= "" and (combined .. "\n") or "") .. extra
   end
-  chat.update_streaming_message(display, true)
+  chat.update_streaming_message(reason or "", combined, true)
 end
 
 -- Allow cancelling current stream

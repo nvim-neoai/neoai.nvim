@@ -122,13 +122,22 @@ config.defaults = {
       api = {
         main = {
           url = "https://api.openai.com/v1/chat/completions",
-          api_key = os.getenv("OPENAI_API_KEY") or "<your api key>",
-          model = "gpt-4o",
+          api_key = os.getenv("OPENAI_API_KEY"),
+          model = "gpt-5",
+          max_completion_tokens = 128000,
+          additional_kwargs = {
+            temperature = 1,
+            reasoning_effort = "high",
+          },
         },
         small = {
           url = "https://api.openai.com/v1/chat/completions",
-          api_key = os.getenv("OPENAI_API_KEY") or "<your api key>",
-          model = "gpt-4o-mini",
+          api_key = os.getenv("OPENAI_API_KEY"),
+          model = "gpt-5-mini",
+          max_completion_tokens = 128000,
+          additional_kwargs = {
+            temperature = 1,
+          },
         },
       },
     },

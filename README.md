@@ -144,14 +144,14 @@ require("neoai").setup({
   api = {
     main = {
       api_key = OPENAI_API_KEY,
-      model = "gpt-4o",
-      max_completion_tokens = 8192,
+      model = "gpt-5",
+      max_completion_tokens = 128000,
       additional_kwargs = { reasoning_effort = "medium" },
     },
     small = {
       api_key = OPENAI_API_KEY,
-      model = "gpt-4o-mini",
-      max_completion_tokens = 4096,
+      model = "gpt-5-mini",
+      max_completion_tokens = 128000,
     },
   },
   chat = {
@@ -162,7 +162,7 @@ require("neoai").setup({
 
 ## Persistent Storage Options
 
-NeoAI supports two persistent storage backends for chat sessions and message history:
+NeoAI supports persistent storage for chat sessions and message history:
 
 - JSON file: If you set `database_path` to a `.json` file (e.g. `neoai.json`), NeoAI will use a plain JSON file for storage (no dependencies required).
 
