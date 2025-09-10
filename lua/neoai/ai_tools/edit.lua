@@ -73,6 +73,59 @@ local function convert_lines_to_offsets(content_lines, start_line, end_line)
   return start_offset, end_offset
 end
 
+--- Generates a detailed report for why a find operation failed.
+---@param edit table The edit operation that failed.
+---@param orig_lines table The original lines of the buffer.
+---@param edit_index integer The index of the failing edit.
+---@return string A formatted string for logging.
+local function generate_failure_report(edit, orig_lines, edit_index)
+  local report_parts = {
+    string.format("--- FIND FAILURE REPORT (Edit #%d) ---", edit_index),
+    "The 'old_string' provided by the AI could not be found.",
+    "\n[SEARCH BLOCK PROVIDED BY AI]",
+    "--------------------------------",
+    edit.old_string,
+    "--------------------------------",
+  }
+
+  if edit.start_line and edit.end_line then
+    table.insert(
+      report_parts,
+      string.format("\nAI hinted to search between lines %d and %d.", edit.start_line, edit.end_line)
+    )
+
+    local actual_lines_at_hint = {}
+    if edit.start_line > #orig_lines then
+      table.insert(report_parts, "The hinted start line is beyond the end of the file.")
+    else
+      local start_l = math.max(1, edit.start_line)
+      local end_l = math.min(#orig_lines, edit.end_line)
+      for i = start_l, end_l do
+        table.insert(actual_lines_at_hint, orig_lines[i])
+      end
+
+      table.insert(report_parts, "\n[ACTUAL CONTENT AT HINTED LOCATION]")
+      table.insert(report_parts, "--------------------------------")
+      table.insert(report_parts, table.concat(actual_lines_at_hint, "\n"))
+      table.insert(report_parts, "--------------------------------")
+
+      local old_lines_for_diff = split_lines(normalise_eol(edit.old_string))
+      strip_cr(old_lines_for_diff)
+      local diff_text = unified_diff(old_lines_for_diff, actual_lines_at_hint)
+
+      table.insert(report_parts, "\n[DIFF (AI Search Block vs Actual Content)]")
+      table.insert(report_parts, "--------------------------------")
+      table.insert(report_parts, diff_text)
+      table.insert(report_parts, "--------------------------------")
+    end
+  else
+    table.insert(report_parts, "\nAI provided no line number hints for this edit.")
+  end
+
+  table.insert(report_parts, "--- END REPORT ---")
+  return table.concat(report_parts, "\n")
+end
+
 -- This function is called from chat.lua to close an open diffview window.
 --- Discard all diffs and revert buffer changes.
 ---@return string: A status message.
@@ -229,8 +282,12 @@ M.run = function(args)
     end
 
     if not start_line then
+      -- NEW: Generate and log a detailed failure report
+      local report = generate_failure_report(edit, orig_lines, i)
+      vim.notify(report, vim.log.levels.WARN, { title = "NeoAI Edit Failure" })
+
       return string.format(
-        "Edit %d: Could not find a matching block for 'old_string'. The code may have changed or the string is inaccurate. All matching strategies failed.",
+        "Edit %d: Could not find a matching block for 'old_string'. See Neovim messages for a detailed failure report.",
         i
       )
     end
