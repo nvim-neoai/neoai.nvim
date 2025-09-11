@@ -266,8 +266,39 @@ M.run = function(args)
       bufnr = bufnr_from_list or vim.fn.bufadd(abs_path),
       original_lines = orig_lines,
     }
+
+    -- Run diagnostics immediately and include a unified diff so the AI can self-correct before user review.
+    local diff_text = unified_diff(orig_lines, updated_lines)
+    local diag_tool = require("neoai.ai_tools.lsp_diagnostic")
+    local diagnostics = diag_tool.run({ file_path = rel_path, include_code_actions = false })
+
+    -- Determine whether there are any error-severity diagnostics for this buffer.
+    local has_errors = false
+    local target_buf = active_edit_state.bufnr
+    if target_buf and vim.api.nvim_buf_is_loaded(target_buf) then
+      for _, d in ipairs(vim.diagnostic.get(target_buf)) do
+        if d.severity == vim.diagnostic.severity.ERROR then
+          has_errors = true
+          break
+        end
+      end
+    end
+
+    -- If there are no errors reported, flag the chat loop to pause and ask the user for a review.
+    if not has_errors then
+      vim.g.neoai_diff_ready_for_review = true
+      -- Best-effort: bump the awaiting flag so chat.get_tool_calls will prompt for approval.
+      pcall(function()
+        local chat_mod = require("neoai.chat")
+        chat_mod.chat_state._diff_await_id = (chat_mod.chat_state._diff_await_id or 0) + 1
+      end)
+    else
+      vim.g.neoai_diff_ready_for_review = false
+    end
+
+    local parts = { msg, "Applied diff:", utils.make_code_block(diff_text, "diff"), diagnostics }
     -- Do not autosave here; wait for the user to review and write or cancel in the inline diff UI.
-    return msg
+    return table.concat(parts, "\n\n")
   else
     -- ... fallback write logic
     local ensure_dir = args.ensure_dir

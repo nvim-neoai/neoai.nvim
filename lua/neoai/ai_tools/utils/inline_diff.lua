@@ -347,7 +347,9 @@ function M.apply(abs_path, old_lines, new_lines, opts)
 
   local target_winnr = find_last_active_editing_window()
   vim.api.nvim_set_current_win(target_winnr)
-  vim.cmd("edit " .. vim.fn.fnameescape(abs_path))
+  -- Open the target file in this window without prompting to save the current buffer.
+  -- Using 'hide' avoids confirm prompts when the current buffer has unsaved changes.
+  pcall(vim.cmd, "silent keepalt keepjumps hide edit " .. vim.fn.fnameescape(abs_path))
   State.bufnr = vim.api.nvim_get_current_buf()
   vim.bo[State.bufnr].modifiable = true
 
@@ -436,6 +438,29 @@ function M.apply(abs_path, old_lines, new_lines, opts)
 
   local msg = string.format("🔍 Inline diff for %d change(s). Use keys to review.", #State.blocks)
   return true, msg
+end
+
+-- Provide a best-effort close helper so callers can revert UI state when needed.
+-- This cleans up highlights, keymaps, and autocommands for the buffer and
+-- marks the review as inactive. It does not attempt to restore content.
+function M.close(bufnr)
+  local b = bufnr or vim.api.nvim_get_current_buf()
+  if b and vim.api.nvim_buf_is_valid(b) then
+    pcall(vim.api.nvim_buf_clear_namespace, b, NAMESPACE, 0, -1)
+    pcall(vim.api.nvim_buf_clear_namespace, b, HINT_NAMESPACE, 0, -1)
+    -- Remove buffer-local keymaps set by apply()
+    local mapopts = { buffer = b }
+    pcall(vim.keymap.del, { "n", "v" }, DEFAULT_KEYS.theirs, mapopts)
+    pcall(vim.keymap.del, { "n", "v" }, DEFAULT_KEYS.ours, mapopts)
+    pcall(vim.keymap.del, { "n", "v" }, DEFAULT_KEYS.all, mapopts)
+    pcall(vim.keymap.del, { "n", "v" }, DEFAULT_KEYS.next, mapopts)
+    pcall(vim.keymap.del, { "n", "v" }, DEFAULT_KEYS.prev, mapopts)
+    pcall(vim.keymap.del, { "n", "v" }, DEFAULT_KEYS.cancel, mapopts)
+  end
+  -- Remove the augroup created by apply() if present
+  local group_name = "neoai_inline_diff_" .. tostring(b)
+  pcall(vim.api.nvim_del_augroup_by_name, group_name)
+  vim.g.neoai_inline_diff_active = false
 end
 
 return M

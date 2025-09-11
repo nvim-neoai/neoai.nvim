@@ -396,12 +396,9 @@ end
 -- Send message
 function chat.send_message()
   if chat.chat_state.streaming_active and chat.chat_state.user_feedback then
-    vim.notify("Pending diffs discarded or confirmed. Awaiting user confirmation.", vim.log.levels.INFO)
-
-    -- Proceed to user confirmation
-    vim.g.neoai_inline_diff_active = true
-    chat.get_tool_calls({})
-
+    -- Ensure we do not open any extra confirmation prompts here.
+    -- Inline diff UI (utils/inline_diff.lua) is the single source of truth for review/approval.
+    vim.notify("Pending diffs handled. Awaiting inline diff review.", vim.log.levels.INFO)
     return
   end
 
@@ -503,6 +500,7 @@ function chat.get_tool_calls(tool_schemas)
     return
   end
 
+  local before_await_id = chat.chat_state._diff_await_id or 0
   local call_names = {}
   for _, sc in ipairs(tool_schemas) do
     if sc and sc["function"] and sc["function"].name and sc["function"].name ~= "" then
@@ -559,35 +557,32 @@ function chat.get_tool_calls(tool_schemas)
     end
   end
 
-  if vim.g.neoai_inline_diff_active and chat.chat_state._diff_await_id ~= 0 then
+  local after_await_id = chat.chat_state._diff_await_id or 0
+  local new_diffs = math.max(0, after_await_id - before_await_id)
+  if vim.g.neoai_inline_diff_active and new_diffs > 0 then
     chat.add_message(
       MESSAGE_TYPES.SYSTEM,
-      "Awaiting your review in the inline diff. The assistant will resume once you approve or reject it.",
+      "Awaiting your review in the inline diff. The assistant will resume once you finish reviewing.",
       {}
     )
+    chat.chat_state.streaming_active = false
 
-    -- Wait for user approval
-    local result = vim.fn.inputlist({ "Choose an action: ", "1. Approve Diffs", "2. Reject Diffs" })
-    if result == 1 then
-      -- User approved
-      chat.add_message(MESSAGE_TYPES.SYSTEM, "User approved diffs.", {})
-      chat.chat_state.streaming_active = true
-      apply_delay(function()
-        chat.send_to_ai()
-      end)
-    elseif result == 2 then
-      -- User rejected
-      chat.add_message(MESSAGE_TYPES.SYSTEM, "User rejected diffs.", {})
-      local ok_edit, edit_mod = pcall(require, "neoai.ai_tools.edit")
-      if ok_edit and edit_mod and type(edit_mod.discard_all_diffs) == "function" then
-        edit_mod.discard_all_diffs()
-      end
-      apply_delay(function()
-        chat.send_to_ai()
-      end)
-    end
-
-    vim.g.neoai_inline_diff_active = false
+    chat.chat_state._pending_diff_reviews = new_diffs
+    local grp_id = vim.api.nvim_create_augroup("NeoAIDiffAwait_" .. tostring(after_await_id), { clear = true })
+    vim.api.nvim_create_autocmd("User", {
+      group = grp_id,
+      pattern = "NeoAIInlineDiffClosed",
+      callback = function()
+        chat.chat_state._pending_diff_reviews = math.max(0, (chat.chat_state._pending_diff_reviews or 0) - 1)
+        if chat.chat_state._pending_diff_reviews == 0 then
+          pcall(vim.api.nvim_del_augroup_by_id, grp_id)
+          apply_delay(function()
+            chat.send_to_ai()
+          end)
+        end
+      end,
+      once = false,
+    })
     return
   end
 
