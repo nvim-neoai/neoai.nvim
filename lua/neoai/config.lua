@@ -99,7 +99,7 @@ config.defaults = {
     auto_scroll = true, -- Auto-scroll to bottom
 
     -- Streaming/response handling
-    thinking_timeout = 200, -- seconds
+    thinking_timeout = 300, -- seconds
   },
 
   presets = {
