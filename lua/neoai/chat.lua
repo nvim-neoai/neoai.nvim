@@ -152,9 +152,13 @@ local function start_thinking_animation()
   st.frame = 1
   local text = " Thinking " .. spinner_frames[st.frame] .. " "
   st.extmark_id = vim.api.nvim_buf_set_extmark(bufnr, thinking_ns, row, 0, {
-    virt_text = { { text, "Comment" } },
-    virt_text_pos = "eol",
+    virt_lines = {
+      { { "", "Comment" } },
+      { { text, "Comment" } },
+    },
+    virt_lines_above = false,
   })
+
   st.timer = vim.loop.new_timer()
   ---@diagnostic disable-next-line: undefined-field
   st.timer:start(
@@ -180,8 +184,11 @@ local function start_thinking_animation()
       if st.extmark_id then
         pcall(vim.api.nvim_buf_set_extmark, b, thinking_ns, row, 0, {
           id = st.extmark_id,
-          virt_text = { { t, "Comment" } },
-          virt_text_pos = "eol",
+          virt_lines = {
+            { { "", "Comment" } },
+            { { t, "Comment" } },
+          },
+          virt_lines_above = false,
         })
       end
     end)
