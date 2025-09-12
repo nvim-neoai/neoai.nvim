@@ -96,6 +96,19 @@ local thinking_ns = vim.api.nvim_create_namespace("NeoAIThinking")
 -- Use simple ASCII spinner for broad compatibility
 local spinner_frames = { "|", "/", "-", "\\" }
 
+-- Format a duration in seconds into a compact human-friendly string (e.g., 1m 33s)
+local function fmt_duration(seconds)
+  seconds = math.max(0, math.floor(seconds or 0))
+  local h = math.floor(seconds / 3600)
+  local m = math.floor((seconds % 3600) / 60)
+  local s = seconds % 60
+  local parts = {}
+  if h > 0 then table.insert(parts, string.format("%dh", h)) end
+  if m > 0 or h > 0 then table.insert(parts, string.format("%dm", m)) end
+  table.insert(parts, string.format("%ds", s))
+  return table.concat(parts, " ")
+end
+
 local function find_last_assistant_header_row()
   local bufnr = chat.chat_state and chat.chat_state.buffers and chat.chat_state.buffers.chat or nil
   if not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then
@@ -131,6 +144,21 @@ local function stop_thinking_animation()
   st.active = false
 end
 
+-- Capture the current thinking duration and mark it to be announced when streaming begins
+local function capture_thinking_duration_for_announce()
+  local st = chat.chat_state and chat.chat_state.thinking or nil
+  if not st then
+    return
+  end
+  local secs = 0
+  if st.start_time then
+    secs = os.time() - st.start_time
+  end
+  st.last_duration_str = fmt_duration(secs)
+  st.announce_pending = true
+  stop_thinking_animation()
+end
+
 local function start_thinking_animation()
   if not (chat.chat_state and chat.chat_state.is_open) then
     return
@@ -149,8 +177,11 @@ local function start_thinking_animation()
   stop_thinking_animation()
 
   st.active = true
-  st.frame = 1
-  local text = " Thinking " .. spinner_frames[st.frame] .. " "
+  st.start_time = os.time()
+  st.announce_pending = false
+  st.last_duration_str = nil
+
+  local text = " Thinking… 0s "
   st.extmark_id = vim.api.nvim_buf_set_extmark(bufnr, thinking_ns, row, 0, {
     virt_lines = {
       { { "", "Comment" } },
@@ -160,10 +191,9 @@ local function start_thinking_animation()
   })
 
   st.timer = vim.loop.new_timer()
-  ---@diagnostic disable-next-line: undefined-field
   st.timer:start(
     0,
-    120,
+    1000,
     vim.schedule_wrap(function()
       if not st.active then
         return
@@ -179,8 +209,11 @@ local function start_thinking_animation()
         return
       end
       local b = chat.chat_state.buffers.chat
-      st.frame = (st.frame % #spinner_frames) + 1
-      local t = " Thinking " .. spinner_frames[st.frame] .. " "
+      local elapsed = 0
+      if st.start_time then
+        elapsed = os.time() - st.start_time
+      end
+      local t = " Thinking… " .. fmt_duration(elapsed) .. " "
       if st.extmark_id then
         pcall(vim.api.nvim_buf_set_extmark, b, thinking_ns, row, 0, {
           id = st.extmark_id,
@@ -740,7 +773,7 @@ function chat.stream_ai_response(messages)
 
     if not saw_first_token then
       saw_first_token = true
-      stop_thinking_animation()
+      capture_thinking_duration_for_announce()
       safe_stop_and_close_timer(thinking_timeout_timer)
       chat.chat_state._timeout_timer = nil
     end
@@ -866,6 +899,12 @@ function chat.update_streaming_message(reason, content, append)
     return
   end
   local display = ""
+  -- Insert the thinking duration announcement (if any) at the very top, just once
+  local st_ = chat.chat_state and chat.chat_state.thinking or nil
+  if st_ and st_.announce_pending and st_.last_duration_str and st_.last_duration_str ~= "" then
+    display = display .. "Thought for " .. st_.last_duration_str .. "\n\n"
+    st_.announce_pending = false
+  end
   -- Ensure the "Preparing tool calls…" status appears below already streamed text, while
   -- keeping any general reasoning text (when present) above the content as before.
   local prep_status
