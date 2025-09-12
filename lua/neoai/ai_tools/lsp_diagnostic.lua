@@ -24,6 +24,73 @@ M.meta = {
   },
 }
 
+--- Internal: resolve a buffer number from args
+---@param args table
+---@return integer|nil
+local function resolve_bufnr(args)
+  local bufnr
+  if args and type(args.bufnr) == "number" and args.bufnr > 0 then
+    bufnr = args.bufnr
+  elseif args and type(args.file_path) == "string" and #args.file_path > 0 then
+    bufnr = vim.fn.bufnr(args.file_path, true)
+  else
+    bufnr = vim.api.nvim_get_current_buf()
+    args = args or {}
+    args.file_path = vim.api.nvim_buf_get_name(bufnr)
+  end
+  if bufnr and bufnr > 0 then
+    pcall(vim.fn.bufload, bufnr)
+  end
+  return bufnr
+end
+
+--- Await an LSP DiagnosticChanged event (or timeout) then return current diagnostics count.
+---@param args table: { file_path?: string, bufnr?: integer, timeout_ms?: integer }
+---@return integer
+function M.await_count(args)
+  args = args or {}
+  local bufnr = resolve_bufnr(args)
+  if not bufnr or not vim.api.nvim_buf_is_loaded(bufnr) then
+    return 0
+  end
+
+  -- If no LSP clients, just return current diagnostics (likely none)
+  local clients = {}
+  if vim.lsp and vim.lsp.get_clients then
+    clients = vim.lsp.get_clients({ bufnr = bufnr }) or {}
+  end
+
+  local initial = vim.diagnostic.get(bufnr) or {}
+  if #clients == 0 then
+    return #initial
+  end
+
+  -- If diagnostics already present, use them
+  if #initial > 0 then
+    return #initial
+  end
+
+  local timeout_ms = tonumber(args.timeout_ms) or 1200
+  local updated = false
+  local grp = vim.api.nvim_create_augroup("NeoAIAwaitDiagnostics_" .. tostring(bufnr), { clear = true })
+  vim.api.nvim_create_autocmd("DiagnosticChanged", {
+    group = grp,
+    buffer = bufnr,
+    callback = function()
+      updated = true
+    end,
+    once = true,
+  })
+  -- Wait for a publish cycle or timeout
+  pcall(vim.wait, timeout_ms, function()
+    return updated
+  end, 50)
+  pcall(vim.api.nvim_del_augroup_by_id, grp)
+
+  local diags = vim.diagnostic.get(bufnr) or {}
+  return #diags
+end
+
 local severity_map = {
   [vim.diagnostic.severity.ERROR] = "Error",
   [vim.diagnostic.severity.WARN] = "Warn",
@@ -50,6 +117,9 @@ M.run = function(args)
   if not vim.api.nvim_buf_is_loaded(bufnr) then
     return "Failed to load buffer for: " .. tostring(args.file_path)
   end
+
+  -- Await at least one LSP diagnostic publish cycle (if a client is attached)
+  pcall(M.await_count, { bufnr = bufnr, timeout_ms = 1200 })
 
   -- Get all diagnostics for this buffer
   local diags ---@type table

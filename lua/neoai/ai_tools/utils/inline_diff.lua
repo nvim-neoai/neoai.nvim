@@ -86,6 +86,26 @@ local function compute_patch(old_lines, new_lines)
   return patch
 end
 
+-- Additional helpers for final outcome reporting
+local function unified_diff(old_lines, new_lines)
+  local old_str = table.concat(old_lines or {}, "\n")
+  local new_str = table.concat(new_lines or {}, "\n")
+  ---@diagnostic disable-next-line: missing-fields
+  local diff = vim.diff(old_str, new_str, { result_type = "unified", algorithm = "histogram" })
+  return diff or "(no changes)"
+end
+
+local function simple_hash(s)
+  s = s or ""
+  local h1, h2 = 0, 0
+  for i = 1, #s do
+    local b = string.byte(s, i)
+    h1 = (h1 + b) % 4294967296
+    h2 = (h2 * 31 + b) % 4294967296
+  end
+  return string.format("%08x%08x_%d", h1, h2, #s)
+end
+
 -- ---
 -- Main Apply Function
 -- ---
@@ -294,11 +314,37 @@ function M.apply(abs_path, old_lines, new_lines, opts)
 
         if not self.event_fired then
           self.event_fired = true
+          -- Prepare final outcome data for the AI/orchestrator
+          local final_lines = {}
+          if self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr) then
+            final_lines = vim.api.nvim_buf_get_lines(self.bufnr, 0, -1, false)
+          else
+            final_lines = vim.deepcopy(self.original_lines)
+          end
+          local diff_text = unified_diff(self.original_lines or {}, final_lines or {})
+          -- Await diagnostics publish for accuracy
+          local diag_count = 0
+          if self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr) then
+            pcall(function()
+              require("neoai.ai_tools.lsp_diagnostic").await_count({ bufnr = self.bufnr, timeout_ms = 1500 })
+            end)
+            diag_count = #vim.diagnostic.get(self.bufnr)
+          end
+          local payload = {
+            action = ((will_write and wrote_ok) and "written" or "resolved"),
+            path = abs_path,
+            bufnr = self.bufnr,
+            diff = diff_text,
+            diff_hash = simple_hash(diff_text),
+            diagnostics_count = diag_count,
+          }
+          -- Mark review as inactive now that it is closed
+          vim.g.neoai_inline_diff_active = false
           vim.schedule(function()
             pcall(vim.api.nvim_exec_autocmds, "User", {
               pattern = "NeoAIInlineDiffClosed",
               modeline = false,
-              data = { action = ((will_write and wrote_ok) and "written" or "resolved"), path = abs_path, bufnr = self.bufnr },
+              data = payload,
             })
             if will_write and wrote_ok then
               vim.notify("NeoAI: All hunks resolved. Changes written to disk.", vim.log.levels.INFO)
@@ -344,12 +390,32 @@ function M.apply(abs_path, old_lines, new_lines, opts)
     self:cleanup()
     if not self.event_fired then
       self.event_fired = true
-      -- vim.g.neoai_inline_diff_active = false
+      -- Prepare final outcome data (cancelled -> restored to original)
+      local final_lines = vim.deepcopy(self.original_lines)
+      local diff_text = unified_diff(self.original_lines or {}, final_lines or {})
+      -- Await diagnostics publish (reverted content)
+      local diag_count = 0
+      if self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr) then
+        pcall(function()
+          require("neoai.ai_tools.lsp_diagnostic").await_count({ bufnr = self.bufnr, timeout_ms = 1500 })
+        end)
+        diag_count = #vim.diagnostic.get(self.bufnr)
+      end
+      local payload = {
+        action = "cancelled",
+        path = abs_path,
+        bufnr = self.bufnr,
+        diff = diff_text,
+        diff_hash = simple_hash(diff_text),
+        diagnostics_count = diag_count,
+      }
+      -- Mark review as inactive
+      vim.g.neoai_inline_diff_active = false
       vim.schedule(function()
         pcall(vim.api.nvim_exec_autocmds, "User", {
           pattern = "NeoAIInlineDiffClosed",
           modeline = false,
-          data = { action = "cancelled", path = abs_path, bufnr = self.bufnr },
+          data = payload,
         })
         vim.notify("NeoAI: Inline diff cancelled; original content restored.", vim.log.levels.WARN)
       end)
@@ -397,12 +463,37 @@ function M.apply(abs_path, old_lines, new_lines, opts)
         State:cleanup()
         if not State.event_fired then
           State.event_fired = true
-          -- vim.g.neoai_inline_diff_active = false
+          -- Prepare final outcome data on write
+          local final_lines = {}
+          if State.bufnr and vim.api.nvim_buf_is_valid(State.bufnr) then
+            final_lines = vim.api.nvim_buf_get_lines(State.bufnr, 0, -1, false)
+          else
+            final_lines = vim.deepcopy(State.original_lines)
+          end
+          local diff_text = unified_diff(State.original_lines or {}, final_lines or {})
+          -- Await diagnostics publish
+          local diag_count = 0
+          if State.bufnr and vim.api.nvim_buf_is_valid(State.bufnr) then
+            pcall(function()
+              require("neoai.ai_tools.lsp_diagnostic").await_count({ bufnr = State.bufnr, timeout_ms = 1500 })
+            end)
+            diag_count = #vim.diagnostic.get(State.bufnr)
+          end
+          local payload = {
+            action = "written",
+            path = abs_path,
+            bufnr = State.bufnr,
+            diff = diff_text,
+            diff_hash = simple_hash(diff_text),
+            diagnostics_count = diag_count,
+          }
+          -- Mark review as inactive
+          vim.g.neoai_inline_diff_active = false
           vim.schedule(function()
             pcall(vim.api.nvim_exec_autocmds, "User", {
               pattern = "NeoAIInlineDiffClosed",
               modeline = false,
-              data = { action = "written", path = abs_path, bufnr = State.bufnr },
+              data = payload,
             })
             vim.notify("NeoAI: Changes written to disk.", vim.log.levels.INFO)
           end)
@@ -418,12 +509,37 @@ function M.apply(abs_path, old_lines, new_lines, opts)
         State:cleanup()
         if not State.event_fired then
           State.event_fired = true
-          -- vim.g.neoai_inline_diff_active = false
+          -- Prepare final outcome data on close
+          local final_lines = {}
+          if State.bufnr and vim.api.nvim_buf_is_valid(State.bufnr) then
+            final_lines = vim.api.nvim_buf_get_lines(State.bufnr, 0, -1, false)
+          else
+            final_lines = vim.deepcopy(State.original_lines)
+          end
+          local diff_text = unified_diff(State.original_lines or {}, final_lines or {})
+          -- Await diagnostics publish
+          local diag_count = 0
+          if State.bufnr and vim.api.nvim_buf_is_valid(State.bufnr) then
+            pcall(function()
+              require("neoai.ai_tools.lsp_diagnostic").await_count({ bufnr = State.bufnr, timeout_ms = 1500 })
+            end)
+            diag_count = #vim.diagnostic.get(State.bufnr)
+          end
+          local payload = {
+            action = "closed",
+            path = abs_path,
+            bufnr = State.bufnr,
+            diff = diff_text,
+            diff_hash = simple_hash(diff_text),
+            diagnostics_count = diag_count,
+          }
+          -- Mark review as inactive
+          vim.g.neoai_inline_diff_active = false
           vim.schedule(function()
             pcall(vim.api.nvim_exec_autocmds, "User", {
               pattern = "NeoAIInlineDiffClosed",
               modeline = false,
-              data = { action = "closed", path = abs_path, bufnr = State.bufnr },
+              data = payload,
             })
           end)
         end

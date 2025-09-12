@@ -272,11 +272,11 @@ M.run = function(args)
     -- then re-indent them with the base indent derived from the context.
     local adjusted_new_lines = {}
     local dedented = dedent(new_lines)
-    for i, line in ipairs(dedented) do
+    for k, line in ipairs(dedented) do
       if line:match("%S") then
-        adjusted_new_lines[i] = base_indent .. line
+        adjusted_new_lines[k] = base_indent .. line
       else
-        adjusted_new_lines[i] = ""
+        adjusted_new_lines[k] = ""
       end
     end
 
@@ -335,8 +335,8 @@ M.run = function(args)
           string.format("Created %s with %d replacement(s) (auto-approved, headless)", rel_path, total_replacements)
     end
     local diff_text = unified_diff(orig_lines, updated_lines)
-    local diag_tool = require("neoai.ai_tools.lsp_diagnostic")
-    local diagnostics = diag_tool.run({ file_path = abs_path, include_code_actions = false })
+    local lsp_diag = require("neoai.ai_tools.lsp_diagnostic")
+    local diagnostics = lsp_diag.run({ file_path = abs_path, include_code_actions = false })
 
     -- Compute a simple hash of the unified diff for orchestration
     local function simple_hash(s)
@@ -351,10 +351,12 @@ M.run = function(args)
     end
     local diff_hash = simple_hash(diff_text)
 
-    -- In headless, diagnostics tool runs against the written buffer; get the count if loaded
+    -- In headless, wait for diagnostics to publish and then get the count
     local diag_count = 0
-    local b = vim.fn.bufnr(abs_path)
-    if b > 0 and vim.api.nvim_buf_is_loaded(b) then
+    pcall(lsp_diag.await_count, { file_path = abs_path, timeout_ms = 1500 })
+    local b = vim.fn.bufnr(abs_path, true)
+    if b > 0 then
+      pcall(vim.fn.bufload, b)
       diag_count = #vim.diagnostic.get(b)
     end
 
@@ -378,14 +380,17 @@ M.run = function(args)
 
     -- Run diagnostics immediately and include a unified diff so the AI can self-correct before user review.
     local diff_text = unified_diff(orig_lines, updated_lines)
-    local diag_tool = require("neoai.ai_tools.lsp_diagnostic")
-    local diagnostics = diag_tool.run({ file_path = abs_path, include_code_actions = false })
+    local lsp_diag = require("neoai.ai_tools.lsp_diagnostic")
+    local diagnostics = lsp_diag.run({ file_path = abs_path, include_code_actions = false })
 
     -- Compute diagnostics count on the target buffer (reflecting patched content)
     local diag_count = 0
     local target_buf = active_edit_state.bufnr
-    if target_buf and vim.api.nvim_buf_is_loaded(target_buf) then
-      diag_count = #vim.diagnostic.get(target_buf)
+    if target_buf then
+      pcall(lsp_diag.await_count, { bufnr = target_buf, timeout_ms = 1500 })
+      if vim.api.nvim_buf_is_loaded(target_buf) then
+        diag_count = #vim.diagnostic.get(target_buf)
+      end
     end
 
     -- Provide machine-readable markers for the orchestrator
