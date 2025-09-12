@@ -9,12 +9,12 @@ local NAMESPACE = vim.api.nvim_create_namespace("neoai-inline-diff")
 local HINT_NAMESPACE = vim.api.nvim_create_namespace("neoai-inline-diff-hint")
 
 local DEFAULT_KEYS = {
-  ours = "co", -- keep current (revert hunk)
+  ours = "co",   -- keep current (revert hunk)
   theirs = "ct", -- accept suggestion (keep new)
-  all = "ca", -- accept all remaining hunks
-  prev = "[d", -- previous hunk
-  next = "]d", -- next hunk
-  cancel = "q", -- cancel review and restore original file content
+  all = "ca",    -- accept all remaining hunks
+  prev = "[d",   -- previous hunk
+  next = "]d",   -- next hunk
+  cancel = "q",  -- cancel review and restore original file content
 }
 
 -- These will only be used if the theme doesn't define the linked groups.
@@ -146,12 +146,12 @@ function M.apply(abs_path, old_lines, new_lines, opts)
       end
       if #b.old_lines > 0 then
         local virt_lines = vim
-          .iter(b.old_lines)
-          :map(function(l)
-            local padded = l .. string.rep(" ", math.max(0, max_col - #l))
-            return { { padded, "NeoAIDeleted" } }
-          end)
-          :totable()
+            .iter(b.old_lines)
+            :map(function(l)
+              local padded = l .. string.rep(" ", math.max(0, max_col - #l))
+              return { { padded, "NeoAIDeleted" } }
+            end)
+            :totable()
         vim.api.nvim_buf_set_extmark(self.bufnr, NAMESPACE, math.max(0, end_line - 1), 0, {
           virt_lines = virt_lines,
           hl_mode = "combine",
@@ -271,20 +271,40 @@ function M.apply(abs_path, old_lines, new_lines, opts)
 
   function State:goto_block(block)
     if not block then
-      -- If no blocks left, cleanup and notify.
+      -- If no blocks left, save, cleanup and notify.
       if #self.blocks == 0 then
+        -- Clean up UI state first to avoid double events from BufWritePost
         self:cleanup()
+
+        -- Attempt to save the buffer so changes are persisted before resuming the AI
+        local will_write, wrote_ok = false, false
+        if self.bufnr and vim.api.nvim_buf_is_valid(self.bufnr) then
+          local bt = vim.api.nvim_get_option_value("buftype", { buf = self.bufnr })
+          local ro = vim.api.nvim_get_option_value("readonly", { buf = self.bufnr })
+          local mod = vim.api.nvim_get_option_value("modified", { buf = self.bufnr })
+          will_write = (bt == "" and not ro and mod)
+          if will_write then
+            wrote_ok = pcall(function()
+              vim.api.nvim_buf_call(self.bufnr, function()
+                vim.cmd("silent write")
+              end)
+            end)
+          end
+        end
+
         if not self.event_fired then
           self.event_fired = true
-          -- Mark review finished (no more hunks). User may still :w to save.
-          -- vim.g.neoai_inline_diff_active = false
           vim.schedule(function()
             pcall(vim.api.nvim_exec_autocmds, "User", {
               pattern = "NeoAIInlineDiffClosed",
               modeline = false,
-              data = { action = "resolved", path = abs_path, bufnr = self.bufnr },
+              data = { action = ((will_write and wrote_ok) and "written" or "resolved"), path = abs_path, bufnr = self.bufnr },
             })
-            vim.notify("NeoAI: All hunks resolved. Press :w to save.", vim.log.levels.INFO)
+            if will_write and wrote_ok then
+              vim.notify("NeoAI: All hunks resolved. Changes written to disk.", vim.log.levels.INFO)
+            else
+              vim.notify("NeoAI: All hunks resolved. Press :w to save.", vim.log.levels.INFO)
+            end
           end)
         end
       end
