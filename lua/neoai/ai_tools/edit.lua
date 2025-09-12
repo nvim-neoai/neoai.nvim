@@ -122,7 +122,7 @@ end
 M.meta = {
   name = "Edit",
   description = utils.read_description("edit")
-    .. " The 'edits' should be provided in the order they appear in the file.",
+      .. " The 'edits' should be provided in the order they appear in the file.",
   parameters = {
     type = "object",
     properties = {
@@ -332,12 +332,40 @@ M.run = function(args)
       summary = string.format("Applied %d replacement(s) to %s (auto-approved, headless)", total_replacements, rel_path)
     else
       summary =
-        string.format("Created %s with %d replacement(s) (auto-approved, headless)", rel_path, total_replacements)
+          string.format("Created %s with %d replacement(s) (auto-approved, headless)", rel_path, total_replacements)
     end
     local diff_text = unified_diff(orig_lines, updated_lines)
     local diag_tool = require("neoai.ai_tools.lsp_diagnostic")
-    local diagnostics = diag_tool.run({ file_path = rel_path, include_code_actions = false })
-    local parts = { summary, "Applied diff:", utils.make_code_block(diff_text, "diff"), diagnostics }
+    local diagnostics = diag_tool.run({ file_path = abs_path, include_code_actions = false })
+
+    -- Compute a simple hash of the unified diff for orchestration
+    local function simple_hash(s)
+      s = s or ""
+      local h1, h2 = 0, 0
+      for i = 1, #s do
+        local b = string.byte(s, i)
+        h1 = (h1 + b) % 4294967296
+        h2 = (h2 * 31 + b) % 4294967296
+      end
+      return string.format("%08x%08x_%d", h1, h2, #s)
+    end
+    local diff_hash = simple_hash(diff_text)
+
+    -- In headless, diagnostics tool runs against the written buffer; get the count if loaded
+    local diag_count = 0
+    local b = vim.fn.bufnr(abs_path)
+    if b > 0 and vim.api.nvim_buf_is_loaded(b) then
+      diag_count = #vim.diagnostic.get(b)
+    end
+
+    local parts = {
+      summary,
+      "Applied diff:",
+      utils.make_code_block(diff_text, "diff"),
+      diagnostics,
+      string.format("NeoAI-Diff-Hash: %s", diff_hash),
+      string.format("NeoAI-Diagnostics-Count: %d", diag_count),
+    }
     return table.concat(parts, "\n\n")
   end
 
@@ -351,33 +379,36 @@ M.run = function(args)
     -- Run diagnostics immediately and include a unified diff so the AI can self-correct before user review.
     local diff_text = unified_diff(orig_lines, updated_lines)
     local diag_tool = require("neoai.ai_tools.lsp_diagnostic")
-    local diagnostics = diag_tool.run({ file_path = rel_path, include_code_actions = false })
+    local diagnostics = diag_tool.run({ file_path = abs_path, include_code_actions = false })
 
-    -- Determine whether there are any error-severity diagnostics for this buffer.
-    local has_errors = false
+    -- Compute diagnostics count on the target buffer (reflecting patched content)
+    local diag_count = 0
     local target_buf = active_edit_state.bufnr
     if target_buf and vim.api.nvim_buf_is_loaded(target_buf) then
-      for _, d in ipairs(vim.diagnostic.get(target_buf)) do
-        if d.severity == vim.diagnostic.severity.ERROR then
-          has_errors = true
-          break
-        end
+      diag_count = #vim.diagnostic.get(target_buf)
+    end
+
+    -- Provide machine-readable markers for the orchestrator
+    local function simple_hash(s)
+      s = s or ""
+      local h1, h2 = 0, 0
+      for i = 1, #s do
+        local b = string.byte(s, i)
+        h1 = (h1 + b) % 4294967296
+        h2 = (h2 * 31 + b) % 4294967296
       end
+      return string.format("%08x%08x_%d", h1, h2, #s)
     end
+    local diff_hash = simple_hash(diff_text)
 
-    -- If there are no errors reported, flag the chat loop to pause and ask the user for a review.
-    if not has_errors then
-      vim.g.neoai_diff_ready_for_review = true
-      -- Best-effort: bump the awaiting flag so chat.get_tool_calls will prompt for approval.
-      pcall(function()
-        local chat_mod = require("neoai.chat")
-        chat_mod.chat_state._diff_await_id = (chat_mod.chat_state._diff_await_id or 0) + 1
-      end)
-    else
-      vim.g.neoai_diff_ready_for_review = false
-    end
-
-    local parts = { msg, "Applied diff:", utils.make_code_block(diff_text, "diff"), diagnostics }
+    local parts = {
+      msg,
+      "Applied diff:",
+      utils.make_code_block(diff_text, "diff"),
+      diagnostics,
+      string.format("NeoAI-Diff-Hash: %s", diff_hash),
+      string.format("NeoAI-Diagnostics-Count: %d", diag_count),
+    }
     -- Do not autosave here; wait for the user to review and write or cancel in the inline diff UI.
     return table.concat(parts, "\n\n")
   else

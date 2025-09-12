@@ -306,6 +306,7 @@ function chat.setup()
     _ts_suspended = false,
     thinking = { active = false, timer = nil, extmark_id = nil, frame = 1 },
     _diff_await_id = 0, -- This is necessary for the fix.
+    _iter_map = {},     -- Track per-file iteration state for edit+diagnostic loop
   }
 
   -- Initialise storage backend
@@ -583,6 +584,20 @@ function chat.get_tool_calls(tool_schemas)
   end
   chat.add_message(MESSAGE_TYPES.ASSISTANT, call_title, {}, nil, tool_schemas)
   local completed = 0
+
+  -- Track whether we should pause for user review after processing tool calls
+  local should_gate = false
+
+  -- Helper to extract orchestration markers from tool output
+  local function parse_markers(text)
+    if type(text) ~= "string" or text == "" then
+      return nil, nil
+    end
+    local hash = text:match("NeoAI%-Diff%-Hash:%s*([%w_%-]+)")
+    local diag = text:match("NeoAI%-Diagnostics%-Count:%s*(%d+)")
+    return hash, (diag and tonumber(diag) or nil)
+  end
+
   for _, schema in ipairs(tool_schemas) do
     if schema.type == "function" and schema["function"] and schema["function"].name then
       local fn = schema["function"]
@@ -615,6 +630,36 @@ function chat.get_tool_calls(tool_schemas)
             content = "No response"
           end
           chat.add_message(MESSAGE_TYPES.TOOL, tostring(content), meta, schema.id)
+
+          -- Forced iteration control: evaluate stop conditions after Edit tool
+          if fn.name == "Edit" then
+            local file_key = (args and args.file_path) or "<unknown>"
+            chat.chat_state._iter_map = chat.chat_state._iter_map or {}
+            local st = chat.chat_state._iter_map[file_key] or { count = 0, last_hash = nil }
+            st.count = (st.count or 0) + 1
+
+            local diff_hash, diag_count = parse_markers(content)
+            local unchanged = (st.last_hash ~= nil and diff_hash ~= nil and st.last_hash == diff_hash)
+
+            local stop = false
+            if diag_count ~= nil and diag_count <= 0 then
+              stop = true
+            end
+            if unchanged then
+              stop = true
+            end
+            if st.count >= 3 then
+              stop = true
+            end
+
+            st.last_hash = diff_hash or st.last_hash
+            chat.chat_state._iter_map[file_key] = st
+
+            if stop and (vim.g.neoai_inline_diff_active == true) then
+              should_gate = true
+            end
+          end
+
           break
         end
       end
@@ -625,6 +670,11 @@ function chat.get_tool_calls(tool_schemas)
       end
       completed = completed + 1
     end
+  end
+
+  -- If we decided to pause for review, bump the await counter once
+  if should_gate then
+    chat.chat_state._diff_await_id = (chat.chat_state._diff_await_id or 0) + 1
   end
 
   local after_await_id = chat.chat_state._diff_await_id or 0
@@ -643,6 +693,8 @@ function chat.get_tool_calls(tool_schemas)
       group = grp_id,
       pattern = "NeoAIInlineDiffClosed",
       callback = function()
+        -- Reset iteration state for the next cycle after the user closes the diff
+        chat.chat_state._iter_map = {}
         chat.chat_state._pending_diff_reviews = math.max(0, (chat.chat_state._pending_diff_reviews or 0) - 1)
         if chat.chat_state._pending_diff_reviews == 0 then
           pcall(vim.api.nvim_del_augroup_by_id, grp_id)
