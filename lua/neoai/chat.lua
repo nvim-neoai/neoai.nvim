@@ -801,13 +801,20 @@ function chat.stream_ai_response(messages)
     chat.chat_state._timeout_timer = nil
     chat.chat_state.streaming_active = false
     stop_thinking_animation()
-    chat.add_message(MESSAGE_TYPES.ERROR, "AI error: " .. tostring(exit_code), {})
+    local err_text = "AI error: " .. tostring(exit_code)
+    chat.add_message(MESSAGE_TYPES.ERROR, err_text, {})
     update_chat_display()
+    -- Also show a notification so the user is immediately aware
+    vim.notify("NeoAI: " .. err_text, vim.log.levels.ERROR)
     disable_ctrl_c_cancel()
     if chat.chat_state._ts_suspended and chat.chat_state.buffers.chat then
       ts_resume(chat.chat_state.buffers.chat)
       chat.chat_state._ts_suspended = false
     end
+    -- Ensure any underlying job is terminated promptly
+    pcall(function()
+      require("neoai.api").cancel()
+    end)
   end, function()
     if not chat.chat_state.streaming_active then
       return

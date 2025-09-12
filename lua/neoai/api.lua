@@ -26,9 +26,11 @@ end
 --- @param messages table
 --- @param on_chunk fun(chunk: table)
 --- @param on_complete fun()
---- @param on_error fun(code: integer)
+--- @param on_error fun(err: integer|string)
 --- @param on_cancel fun()|nil
 function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
+  -- Track if we've already reported an error to avoid duplicate notifications
+  local error_reported = false
   -- Create a new job and mark it as not cancelled
 
   local basic_payload = {
@@ -55,8 +57,10 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
     command = "curl",
     args = {
       "--silent",
+      "--show-error", -- ensure errors are printed even in silent mode
       "--no-buffer",
       "--location",
+      "--fail", -- make curl return non-zero on HTTP 4xx/5xx early (widely supported)
       conf.url,
       "--header",
       "Content-Type: application/json",
@@ -74,13 +78,32 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
           vim.schedule(function()
             -- Some providers send a terminal sentinel line
             if chunk == "[DONE]" then
-              on_complete()
+              if not error_reported then
+                on_complete()
+              end
               return
             end
 
             local ok, decoded = pcall(vim.fn.json_decode, chunk)
             if not (ok and decoded) then
               return
+            end
+
+            -- Detect SSE error payloads and surface immediately
+            if not error_reported and type(decoded) == "table" then
+              local err_msg
+              if type(decoded.error) == "table" then
+                err_msg = decoded.error.message or decoded.error.type or vim.inspect(decoded.error)
+              elseif decoded.error ~= nil then
+                err_msg = tostring(decoded.error)
+              elseif decoded.message and not decoded.choices and not decoded.delta then
+                err_msg = decoded.message
+              end
+              if err_msg and err_msg ~= "" then
+                error_reported = true
+                on_error("API error: " .. tostring(err_msg))
+                return
+              end
             end
 
             local handled = false
@@ -149,7 +172,42 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
               end
             end
           end)
+        else
+          -- Non-SSE output: attempt to detect JSON error bodies and surface them early
+          local trimmed = vim.trim(data_line)
+          if not error_reported and trimmed ~= "" and (trimmed:sub(1, 1) == "{" or trimmed:sub(1, 1) == "[") then
+            local ok, decoded = pcall(vim.fn.json_decode, trimmed)
+            if ok and decoded then
+              local err_msg
+              if type(decoded.error) == "table" then
+                err_msg = decoded.error.message or decoded.error.type or vim.inspect(decoded.error)
+              elseif decoded.error ~= nil then
+                err_msg = tostring(decoded.error)
+              elseif type(decoded) == "table" and decoded.message and not decoded.choices then
+                -- Some providers return { message = "...", type = "..." } on errors
+                err_msg = decoded.message
+              end
+              if err_msg and err_msg ~= "" then
+                error_reported = true
+                vim.schedule(function()
+                  on_error("API error: " .. tostring(err_msg))
+                end)
+              end
+            end
+          end
         end
+      end
+    end,
+    on_stderr = function(_, line)
+      if not line or line == "" then
+        return
+      end
+      -- With --show-error, curl writes human-readable errors here. Surface immediately.
+      if not error_reported then
+        error_reported = true
+        vim.schedule(function()
+          on_error("curl error: " .. tostring(line))
+        end)
       end
     end,
     on_exit = function(j, exit_code)
