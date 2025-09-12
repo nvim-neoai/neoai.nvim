@@ -6,6 +6,35 @@ local prompt = require("neoai.prompt")
 local storage = require("neoai.storage")
 local uv = vim.loop
 
+-- Helper: get the configured "main" model name (if available)
+local function get_main_model_name()
+  local ok, cfg = pcall(require, "neoai.config")
+  if not ok or not cfg or type(cfg.get_api) ~= "function" then
+    return nil
+  end
+  local ok2, api = pcall(function()
+    return cfg.get_api("main")
+  end)
+  if not ok2 or not api then
+    return nil
+  end
+  local model = api.model
+  if type(model) ~= "string" or model == "" then
+    return nil
+  end
+  return model
+end
+
+-- Helper: build the Assistant header including the model name when available
+local function build_assistant_header(time_str)
+  local model = get_main_model_name()
+  if model then
+    return "**Assistant:** (" .. model .. ") *" .. time_str .. "*"
+  else
+    return "**Assistant:** *" .. time_str .. "*"
+  end
+end
+
 -- Safe helper to stop and close a libuv timer without throwing when it's already closing
 local function safe_stop_and_close_timer(t)
   if not t then
@@ -91,10 +120,10 @@ local function stop_thinking_animation()
     st.timer = nil
   end
   if
-    st.extmark_id
-    and chat.chat_state.buffers
-    and chat.chat_state.buffers.chat
-    and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
+      st.extmark_id
+      and chat.chat_state.buffers
+      and chat.chat_state.buffers.chat
+      and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
   then
     pcall(vim.api.nvim_buf_del_extmark, chat.chat_state.buffers.chat, thinking_ns, st.extmark_id)
   end
@@ -136,12 +165,12 @@ local function start_thinking_animation()
         return
       end
       if
-        not (
-          chat.chat_state
-          and chat.chat_state.buffers
-          and chat.chat_state.buffers.chat
-          and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
-        )
+          not (
+            chat.chat_state
+            and chat.chat_state.buffers
+            and chat.chat_state.buffers.chat
+            and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
+          )
       then
         return
       end
@@ -293,7 +322,7 @@ local function update_chat_display()
     if message.type == MESSAGE_TYPES.USER then
       prefix = "**User:** *" .. ts .. "*"
     elseif message.type == MESSAGE_TYPES.ASSISTANT then
-      prefix = "**Assistant:** *" .. ts .. "*"
+      prefix = build_assistant_header(ts)
       if message.metadata and message.metadata.response_time then
         prefix = prefix:gsub("%*$", " (" .. message.metadata.response_time .. "s)*")
       end
@@ -344,7 +373,7 @@ function chat.add_message(type, content, metadata, tool_call_id, tool_calls)
   metadata.timestamp = metadata.timestamp or os.date("%Y-%m-%d %H:%M:%S")
 
   local msg_id =
-    storage.add_message(chat.chat_state.current_session.id, type, content, metadata, tool_call_id, tool_calls)
+      storage.add_message(chat.chat_state.current_session.id, type, content, metadata, tool_call_id, tool_calls)
   if not msg_id then
     vim.notify("Failed to save message to storage", vim.log.levels.ERROR)
   end
@@ -479,8 +508,9 @@ function chat.send_to_ai()
   if chat.chat_state.is_open then
     local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.chat, 0, -1, false)
     table.insert(lines, "---")
-    table.insert(lines, "**Assistant:** *" .. os.date("%Y-%m-%d %H:%M:%S") .. "*")
+    table.insert(lines, build_assistant_header(os.date("%Y-%m-%d %H:%M:%S")))
     table.insert(lines, "")
+
     vim.api.nvim_buf_set_lines(chat.chat_state.buffers.chat, 0, -1, false, lines)
     if chat.chat_state.config.auto_scroll then
       scroll_to_bottom(chat.chat_state.buffers.chat)
@@ -728,7 +758,7 @@ function chat.stream_ai_response(messages)
                   end
                   if tool_call["function"].arguments and tool_call["function"].arguments ~= "" then
                     existing_call["function"].arguments = (existing_call["function"].arguments or "")
-                      .. tool_call["function"].arguments
+                        .. tool_call["function"].arguments
                   end
                 end
                 found = true
@@ -862,7 +892,8 @@ function chat.update_streaming_message(reason, content, append)
       for j = 1, i - 1 do
         table.insert(new_lines, lines[j])
       end
-      table.insert(new_lines, "**Assistant:** *" .. os.date("%Y-%m-%d %H:%M:%S") .. "*")
+      table.insert(new_lines, build_assistant_header(os.date("%Y-%m-%d %H:%M:%S")))
+
       table.insert(new_lines, "")
       for _, ln in ipairs(vim.split(display, "\n")) do
         table.insert(new_lines, "  " .. ln)
