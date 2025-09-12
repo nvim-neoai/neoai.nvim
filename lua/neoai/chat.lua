@@ -833,13 +833,27 @@ function chat.update_streaming_message(reason, content, append)
     return
   end
   local display = ""
-  -- Add tool preparation status above other AI or reasoning content
+  -- Ensure the "Preparing tool calls…" status appears below already streamed text, while
+  -- keeping any general reasoning text (when present) above the content as before.
+  local prep_status
+  if type(reason) == "string" and reason:find("Preparing tool calls") then
+    -- Trim any leading newlines so spacing remains tidy when appended below.
+    prep_status = reason:gsub("^%s*\n+", "")
+    reason = nil
+  end
 
   if reason and reason ~= "" then
     display = display .. reason .. "\n\n"
   end
   if content and content ~= "" then
     display = display .. tostring(content)
+  end
+  if prep_status and prep_status ~= "" then
+    if display ~= "" then
+      display = display .. "\n\n" .. prep_status
+    else
+      display = prep_status
+    end
   end
   local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.chat, 0, -1, false)
   for i = #lines, 1, -1 do
