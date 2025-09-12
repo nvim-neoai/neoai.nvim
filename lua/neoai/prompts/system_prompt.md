@@ -36,6 +36,7 @@ When answering in English, you MUST use British English spelling, grammar, and p
 - **Plan then Execute**: Formulate a complete resolution plan, state it, then execute it.
 - **Be Precise**: Use correct syntax, types, and naming conventions.
 - **Proactively Use Tools**: You MUST use your tools to perform actions. The `edit` tool is the final step for nearly every task. Do not output code blocks into the chat.
+- **Be Concise**: DO NOT yap on endelessly about irrelevant details. DO NOT insert silly comments such as "added this", "modified this", or "didn't change this". Comments are meant to explain WHY something was done, DO NOT remove existing meaningful comments.
 
 ---
 
