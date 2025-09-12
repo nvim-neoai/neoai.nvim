@@ -8,7 +8,7 @@ local M = {}
 local active_edit_state = {}
 
 --[[
-  UTILITY FUNCTIONS (unchanged)
+  UTILITY FUNCTIONS (with improved indentation handling)
 --]]
 local function split_lines(str)
   return vim.split(str, "\n", { plain = true })
@@ -22,6 +22,76 @@ local function strip_cr(lines)
   for i = 1, #lines do
     lines[i] = lines[i]:gsub("\r$", "")
   end
+end
+
+-- Compute the leading whitespace string for a given line.
+local function leading_ws(s)
+  return (s or ""):match("^%s*") or ""
+end
+
+-- Compute minimal indent length (in characters) among non-empty lines.
+local function min_indent_len(lines)
+  local min_len
+  for _, l in ipairs(lines) do
+    if l:match("%S") then
+      local len = #leading_ws(l)
+      if not min_len or len < min_len then
+        min_len = len
+      end
+    end
+  end
+  return min_len or 0
+end
+
+-- Find the line index (1-based) within a range that has the minimal indent.
+local function range_min_indent_line(lines, s, e)
+  local min_len, min_idx
+  for i = s, math.max(s, e) do
+    local l = lines[i]
+    if l and l:match("%S") then
+      local len = #leading_ws(l)
+      if not min_len or len < min_len then
+        min_len = len
+        min_idx = i
+      end
+    end
+  end
+  return min_len or 0, min_idx
+end
+
+-- Remove up to `n` leading whitespace characters (spaces or tabs) from a line.
+local function remove_leading_ws_chars(line, n)
+  if n <= 0 then
+    return line
+  end
+  local i, removed = 1, 0
+  while removed < n and i <= #line do
+    local ch = line:sub(i, i)
+    if ch == " " or ch == "\t" then
+      i = i + 1
+      removed = removed + 1
+    else
+      break
+    end
+  end
+  return line:sub(i)
+end
+
+-- Dedent lines by their minimal common indentation while preserving relative indentation.
+local function dedent(lines)
+  local n = min_indent_len(lines)
+  if n <= 0 then
+    return vim.deepcopy(lines)
+  end
+  local out = {}
+  for i, l in ipairs(lines) do
+    if l:match("%S") then
+      out[i] = remove_leading_ws_chars(l, n)
+    else
+      out[i] = ""
+    end
+  end
+  return out
 end
 
 local function unified_diff(old_lines, new_lines)
@@ -185,17 +255,28 @@ M.run = function(args)
     local new_lines = split_lines(normalise_eol(edit.new_string))
     strip_cr(new_lines)
 
-    local indent = ""
-    if start_line > 0 and start_line <= #working_lines then
-      indent = working_lines[start_line]:match("^%s*") or ""
+    -- Determine the base indent from the smallest-indented non-empty line in the matched range.
+    local base_indent = ""
+    if start_line and end_line and start_line >= 1 and end_line >= start_line then
+      local _, idx = range_min_indent_line(working_lines, start_line, end_line)
+      if idx and working_lines[idx] then
+        base_indent = leading_ws(working_lines[idx])
+      else
+        base_indent = leading_ws(working_lines[start_line] or "")
+      end
+    else
+      base_indent = leading_ws(working_lines[start_line] or "")
     end
 
+    -- Dedent the incoming new_lines by their minimal common indentation,
+    -- then re-indent them with the base indent derived from the context.
     local adjusted_new_lines = {}
-    for _, line in ipairs(new_lines) do
+    local dedented = dedent(new_lines)
+    for i, line in ipairs(dedented) do
       if line:match("%S") then
-        table.insert(adjusted_new_lines, indent .. line)
+        adjusted_new_lines[i] = base_indent .. line
       else
-        table.insert(adjusted_new_lines, "")
+        adjusted_new_lines[i] = ""
       end
     end
 
