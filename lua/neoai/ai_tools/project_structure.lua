@@ -26,7 +26,19 @@ M.meta = {
 -- @param args table { path: string, max_depth: number }
 -- @return string
 M.run = function(args) -- Type: function
-  local path = args.path or "." -- Type: string
+  args = type(args) == "table" and args or {}
+  -- Normalise path: default to current directory when nil/empty/whitespace.
+  local path = args.path
+  if type(path) ~= "string" then
+    path = "."
+  else
+    path = path:gsub("^%s*(.-)%s*$", "%1")
+    if path == "" then
+      path = "."
+    end
+  end
+  -- Expand ~ and environment variables
+  path = vim.fn.expand(path)
 
   local max_depth = args.max_depth -- Type: number or nil
 
