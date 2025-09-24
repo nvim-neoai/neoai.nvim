@@ -655,6 +655,7 @@ function chat.get_tool_calls(tool_schemas)
   -- Track whether we should pause for user review after processing tool calls
   local should_gate = false
   local deferred_to_open ---@type string|nil
+  local any_deferred = false -- Saw at least one Edit call staged for deferred review
 
   -- Helper to extract orchestration markers from tool output
   local function parse_markers(text)
@@ -682,9 +683,15 @@ function chat.get_tool_calls(tool_schemas)
           if fn.name == "Edit" then
             args = args or {}
             args.interactive_review = false
+            any_deferred = true
+            local file_key0 = (args and args.file_path) or "<unknown>"
+            if not deferred_to_open then
+              deferred_to_open = file_key0
+            end
           end
 
           local resp_ok, resp = pcall(tool.run, args)
+
           local meta = { tool_name = fn.name }
           local content = ""
           if not resp_ok then
@@ -749,8 +756,12 @@ function chat.get_tool_calls(tool_schemas)
     end
   end
 
-  -- If we decided to pause for review, open the deferred diff and gate the loop
-  if should_gate and deferred_to_open and deferred_to_open ~= "" then
+  -- If we decided to pause for review, or we staged any deferred edits at all, open the deferred diff and gate the loop
+  if
+    (should_gate or (any_deferred and deferred_to_open and deferred_to_open ~= ""))
+    and deferred_to_open
+    and deferred_to_open ~= ""
+  then
     local opened = false
     local ok_open, edit_mod = pcall(require, "neoai.ai_tools.edit")
     if ok_open and edit_mod and type(edit_mod.open_deferred_review) == "function" then
@@ -1282,3 +1293,4 @@ end
 -- Export
 chat.MESSAGE_TYPES = MESSAGE_TYPES
 return chat
+
