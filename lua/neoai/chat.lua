@@ -148,7 +148,7 @@ local function stop_thinking_animation()
   st.active = false
 end
 
--- Ensure the thinking status (virt_lines) is visible by focusing the header line
+-- Ensure the thinking status (virt_lines) is visible with minimal scrolling
 local function ensure_thinking_visible()
   if not (chat.chat_state and chat.chat_state.config and chat.chat_state.config.auto_scroll) then
     return
@@ -159,16 +159,41 @@ local function ensure_thinking_visible()
     return
   end
   local ok, pos = pcall(vim.api.nvim_buf_get_extmark_by_id, bufnr, thinking_ns, st.extmark_id, {})
-  if not ok or not pos or not pos[1] then
+  if not ok or not pos or pos[1] == nil then
     return
   end
-  local row = pos[1]
+  local target = pos[1] + 1 -- 1-based line number of the header/anchor
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_get_buf(win) == bufnr then
-      pcall(vim.api.nvim_win_set_cursor, win, { row + 1, 0 })
-      pcall(vim.api.nvim_win_call, win, function()
-        vim.cmd("normal! zt")
+      -- Query the current visible range for this window
+      local view_ok, top, bot = pcall(function()
+        return vim.api.nvim_win_call(win, function()
+          return vim.fn.line("w0"), vim.fn.line("w$")
+        end)
       end)
+      if view_ok and top and bot then
+        if target < top then
+          -- Scroll just enough upwards to reveal the target at the top
+          pcall(vim.api.nvim_win_set_cursor, win, { target, 0 })
+          pcall(vim.api.nvim_win_call, win, function()
+            vim.cmd("normal! zt")
+          end)
+        elseif target > bot then
+          -- Scroll just enough downwards to reveal the target at the bottom
+          pcall(vim.api.nvim_win_set_cursor, win, { target, 0 })
+          pcall(vim.api.nvim_win_call, win, function()
+            vim.cmd("normal! zb")
+          end)
+        else
+          -- Already visible: do nothing
+        end
+      else
+        -- Fallback: centre the target if we couldn't determine the view bounds
+        pcall(vim.api.nvim_win_set_cursor, win, { target, 0 })
+        pcall(vim.api.nvim_win_call, win, function()
+          vim.cmd("normal! zz")
+        end)
+      end
     end
   end
 end

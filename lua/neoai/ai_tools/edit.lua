@@ -140,7 +140,7 @@ M.meta = {
       },
       interactive_review = {
         type = "boolean",
-        description = "When false, never open the inline diff UI (even if a UI is present). Apply changes headlessly and return the diff and diagnostics markers. Useful for iterative edit+diagnostic loops to defer user review until the end.",
+        description = "When false and a UI is present, do not open the inline diff UI yet; stage changes for a deferred review and do not write to disk. Only when no UI is present will changes be applied headlessly.",
       },
       edits = {
         type = "array",
@@ -329,9 +329,11 @@ M.run = function(args)
 
   -- Decide whether to show the interactive inline diff or apply headlessly.
   local uis = vim.api.nvim_list_uis()
-  if force_headless or not uis or #uis == 0 then
-    -- ... headless logic
+  local has_ui = uis and #uis > 0
 
+  -- If no UI is available at all, fall back to headless write-to-disk behaviour.
+  if not has_ui then
+    -- ... headless logic (no UI available)
     local ensure_dir = args.ensure_dir
     if ensure_dir == nil then
       ensure_dir = true
@@ -388,6 +390,45 @@ M.run = function(args)
       diagnostics,
       string.format("NeoAI-Diff-Hash: %s", diff_hash),
       string.format("NeoAI-Diagnostics-Count: %d", diag_count),
+    }
+    return table.concat(parts, "\n\n")
+  end
+
+  -- UI is available. Respect interactive_review flag as a request to DEFER showing UI,
+  -- but never write to disk. Stage the changes for a later interactive review instead.
+  if force_headless then
+    local diff_text = unified_diff(orig_lines, updated_lines)
+    -- Compute a simple hash of the unified diff for orchestration
+    local function simple_hash(s)
+      s = s or ""
+      local h1, h2 = 0, 0
+      for i = 1, #s do
+        local b = string.byte(s, i)
+        h1 = (h1 + b) % 4294967296
+        h2 = (h2 * 31 + b) % 4294967296
+      end
+      return string.format("%08x%08x_%d", h1, h2, #s)
+    end
+    local diff_hash = simple_hash(diff_text)
+
+    local summary
+    if file_exists then
+      summary =
+        string.format("Staged %d replacement(s) for %s (deferred review; not written)", total_replacements, rel_path)
+    else
+      summary = string.format(
+        "Staged new file %s with %d replacement(s) (deferred review; not written)",
+        rel_path,
+        total_replacements
+      )
+    end
+
+    local parts = {
+      summary,
+      "Pending diff (staged):",
+      utils.make_code_block(diff_text, "diff"),
+      -- Intentionally omit diagnostics count in deferred mode to avoid premature gating
+      string.format("NeoAI-Diff-Hash: %s", diff_hash),
     }
     return table.concat(parts, "\n\n")
   end
