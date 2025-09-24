@@ -120,11 +120,25 @@ config.defaults = {
         {
           name = "ProjectStructure",
           args = {
-            path = "lua/neoai",
+            path = ".",
             preferred_depth = 3,
             adaptive = true,
             small_file_threshold = 50,
             large_file_threshold = 400,
+          },
+        },
+        {
+          name = "SymbolIndex",
+          args = {
+            path = ".",
+            globs = { "**/*.lua", "**/*.py", "**/*.js", "**/*.ts", "**/*.tsx", "**/*.go", "**/*.rs", "**/*.java" },
+            languages = { "lua", "python", "javascript", "typescript", "tsx", "go", "rust", "java" },
+            include_docstrings = true,
+            include_ranges = true,
+            include_signatures = true,
+            max_files = 150,
+            max_symbols_per_file = 300,
+            fallback_to_text = true,
           },
         },
       },
