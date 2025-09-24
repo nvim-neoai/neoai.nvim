@@ -292,7 +292,7 @@ NeoAI.nvim now features an intelligent editing system with LSP integration:
 ```
 User: "Fix the TypeScript errors in src/components/Button.tsx"
 
-→ AI analyzes file, applies fixes, saves automatically
+→ AI analyses file, applies fixes, saves automatically
 → LSP diagnostics are collected (debounced for performance)
 → AI sees remaining issues and suggests additional improvements
 → Process continues until all issues are resolved
@@ -403,7 +403,7 @@ All sessions are automatically saved to persistent JSON file.
 - **Enhanced Edit System**: Automatic file saving, LSP diagnostic feedback loops, and inline diff preview
 - **Improved UI**: Model name display, thinking time indicators, and response duration tracking
 - **LSP Integration**: Debounced diagnostic collection and automatic code improvement workflows
-- **Performance Optimizations**: Better handling of large files and reduced unnecessary LSP calls
+- **Performance Optimisations**: Better handling of large files and reduced unnecessary LSP calls
 - **Smart Indentation**: Improved handling of code indentation during edit operations
 
 ## Troubleshooting
