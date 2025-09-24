@@ -9,12 +9,12 @@ local NAMESPACE = vim.api.nvim_create_namespace("neoai-inline-diff")
 local HINT_NAMESPACE = vim.api.nvim_create_namespace("neoai-inline-diff-hint")
 
 local DEFAULT_KEYS = {
-  ours = "co",   -- keep current (revert hunk)
+  ours = "co", -- keep current (revert hunk)
   theirs = "ct", -- accept suggestion (keep new)
-  all = "ca",    -- accept all remaining hunks
-  prev = "[d",   -- previous hunk
-  next = "]d",   -- next hunk
-  cancel = "q",  -- cancel review and restore original file content
+  all = "ca", -- accept all remaining hunks
+  prev = "[d", -- previous hunk
+  next = "]d", -- next hunk
+  cancel = "q", -- cancel review and restore original file content
 }
 
 -- These will only be used if the theme doesn't define the linked groups.
@@ -166,12 +166,12 @@ function M.apply(abs_path, old_lines, new_lines, opts)
       end
       if #b.old_lines > 0 then
         local virt_lines = vim
-            .iter(b.old_lines)
-            :map(function(l)
-              local padded = l .. string.rep(" ", math.max(0, max_col - #l))
-              return { { padded, "NeoAIDeleted" } }
-            end)
-            :totable()
+          .iter(b.old_lines)
+          :map(function(l)
+            local padded = l .. string.rep(" ", math.max(0, max_col - #l))
+            return { { padded, "NeoAIDeleted" } }
+          end)
+          :totable()
         vim.api.nvim_buf_set_extmark(self.bufnr, NAMESPACE, math.max(0, end_line - 1), 0, {
           virt_lines = virt_lines,
           hl_mode = "combine",
@@ -196,7 +196,20 @@ function M.apply(abs_path, old_lines, new_lines, opts)
       self.keys.next,
       self.keys.cancel
     )
-    vim.api.nvim_buf_set_extmark(self.bufnr, HINT_NAMESPACE, math.max(0, lnum - 1), -1, {
+
+    -- Place the hint one line above the first line of the current diff hunk.
+    -- If the hunk starts at the top of the file, try to place it on the line below.
+    local row
+    if lnum > 1 then
+      -- 0-based row index for the line above the hunk start
+      row = lnum - 2
+    else
+      -- Hunk starts on the first line; prefer showing the hint on the second line if it exists
+      local line_count = vim.api.nvim_buf_line_count(self.bufnr)
+      row = (line_count >= 2) and 1 or 0
+    end
+
+    vim.api.nvim_buf_set_extmark(self.bufnr, HINT_NAMESPACE, row, -1, {
       hl_group = "NeoAIInlineHint",
       virt_text = { { hint, "NeoAIInlineHint" } },
       virt_text_pos = "right_align",
