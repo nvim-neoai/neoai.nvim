@@ -13,17 +13,36 @@ M.meta = {
         type = "string",
         description = "Relative path to inspect (default: current working directory).",
       },
+      -- preferred_depth is the target display depth (default 3). If adaptive is true,
+      -- this is used as a baseline and may be increased/decreased based on file count.
+      preferred_depth = {
+        type = "number",
+        description = "Preferred display depth (default 3).",
+      },
+      -- For backwards compatibility: if provided, treated as preferred_depth.
       max_depth = {
         type = "number",
-        description = "Maximum recursion depth for listing files.",
+        description = "Deprecated alias for preferred_depth.",
+      },
+      adaptive = {
+        type = "boolean",
+        description = "Enable adaptive depth based on repository size (default true).",
+      },
+      small_file_threshold = {
+        type = "number",
+        description = "If total files <= threshold, expand fully (default 50).",
+      },
+      large_file_threshold = {
+        type = "number",
+        description = "If total files >= threshold, clamp depth (default 400).",
       },
     },
     required = {},
     additionalProperties = false,
   },
 }
---- Runs the project structure listing
--- @param args table { path: string, max_depth: number }
+--- Runs the project structure listing (adaptive depth)
+-- @param args table { path?: string, preferred_depth?: number, max_depth?: number (deprecated alias), adaptive?: boolean, small_file_threshold?: number, large_file_threshold?: number }
 -- @return string
 M.run = function(args) -- Type: function
   args = type(args) == "table" and args or {}
@@ -40,50 +59,50 @@ M.run = function(args) -- Type: function
   -- Expand ~ and environment variables
   path = vim.fn.expand(path)
 
-  local max_depth = args.max_depth -- Type: number or nil
+  -- Always list all files first (respecting .gitignore) so we can adapt depth based on repo size
+  local cmd = { "rg", "--files", path }
+  local result = vim.system(cmd, { cwd = vim.fn.getcwd(), text = true }):wait()
 
-  -- Build the ripgrep command
-  local cmd = { "rg", "--files" } -- Type: table
-
-  if max_depth then
-    table.insert(cmd, "--max-depth")
-    table.insert(cmd, tostring(max_depth))
-  end
-
-  -- Add the path argument to scope the search
-  table.insert(cmd, path)
-
-  -- Execute the command using vim.system for better control and output handling
-  local result = vim
-    .system(cmd, {
-      cwd = vim.fn.getcwd(),
-      text = true, -- Get stdout as a string
-    })
-    :wait()
-
-  -- rg exits 2 on error, 1 for no matches (which is not an error for us)
   if result.code > 1 then
     return "Error running `rg`: " .. (result.stderr or "Unknown error") -- Type: string
   end
 
-  local files = vim.split(result.stdout, "\n", { trimempty = true }) -- Type: table
+  local files = vim.split(result.stdout or "", "\n", { trimempty = true }) -- Type: table
 
   if vim.tbl_isempty(files) then
     return "No files found in '" .. path .. "' (respecting .gitignore)."
   end
+
+  -- Determine effective display depth
+  local adaptive = args.adaptive
+  if adaptive == nil then
+    adaptive = true
+  end
+  local preferred_depth = args.preferred_depth or args.max_depth or 3
+  local small_thr = args.small_file_threshold or 50
+  local large_thr = args.large_file_threshold or 400
+
+  local effective_depth = preferred_depth
+  local total_files = #files
+  if adaptive then
+    if total_files <= small_thr then
+      -- Expand fully for small repos
+      effective_depth = 1e9 -- effectively unlimited
+    elseif total_files >= large_thr then
+      -- Clamp for very large repos
+      effective_depth = math.min(preferred_depth, 2)
+    end
+  end
+
+  -- Build a directory tree from the file list
   local tree = {} -- Type: table
-
   for _, filepath in ipairs(files) do
-    local parts = vim.split(filepath, "/") -- Type: table
-
+    local parts = vim.split(filepath, "/", { plain = true }) -- Type: table
     local current_level = tree -- Type: table
-
     for i, part in ipairs(parts) do
       if i == #parts then
-        -- It's a file
-        current_level[part] = true -- Use `true` as a sentinel for files
+        current_level[part] = true -- file sentinel
       else
-        -- It's a directory
         if type(current_level[part]) ~= "table" then
           current_level[part] = {}
         end
@@ -91,12 +110,28 @@ M.run = function(args) -- Type: function
       end
     end
   end
+
   local lines = { "🔍 Project structure for: " .. path } -- Type: table
 
-  local function format_tree(t, prefix) -- Type: function
-    local keys = {} -- Type: table
+  -- Helper to count descendants in a subtree
+  local function count_descendants(node)
+    local dirs, files_n = 0, 0
+    for _, v in pairs(node) do
+      if type(v) == "table" then
+        dirs = dirs + 1
+        local d2, f2 = count_descendants(v)
+        dirs = dirs + d2
+        files_n = files_n + f2
+      else
+        files_n = files_n + 1
+      end
+    end
+    return dirs, files_n
+  end
 
-    for k in pairs(t) do -- Type: string
+  local function format_tree(t, prefix, depth, max_depth) -- Type: function
+    local keys = {}
+    for k in pairs(t) do
       table.insert(keys, k)
     end
     table.sort(keys)
@@ -108,14 +143,20 @@ M.run = function(args) -- Type: function
       local entry_prefix = prefix .. (is_last and "└── " or "├── ")
 
       if type(v) == "table" then
-        table.insert(lines, entry_prefix .. "📁 " .. k)
-        format_tree(v, new_prefix)
+        if depth >= max_depth then
+          local dcnt, fcnt = count_descendants(v)
+          table.insert(lines, entry_prefix .. "📁 " .. k .. " … (" .. dcnt .. " dirs, " .. fcnt .. " files)")
+        else
+          table.insert(lines, entry_prefix .. "📁 " .. k)
+          format_tree(v, new_prefix, depth + 1, max_depth)
+        end
       else
         table.insert(lines, entry_prefix .. "📄 " .. k)
       end
     end
   end
-  local function format_root(t) -- Type: function
+
+  local function format_root(t, max_depth) -- Type: function
     local keys = {}
     for k in pairs(t) do
       table.insert(keys, k)
@@ -129,22 +170,26 @@ M.run = function(args) -- Type: function
       local next_prefix = is_last and "    " or "│   "
 
       if type(v) == "table" then
-        table.insert(lines, prefix .. "📁 " .. k)
-        format_tree(v, next_prefix)
+        if 1 > max_depth then
+          local dcnt, fcnt = count_descendants(v)
+          table.insert(lines, prefix .. "📁 " .. k .. " … (" .. dcnt .. " dirs, " .. fcnt .. " files)")
+        else
+          table.insert(lines, prefix .. "📁 " .. k)
+          format_tree(v, next_prefix, 2, max_depth)
+        end
       else
         table.insert(lines, prefix .. "📄 " .. k)
       end
     end
   end
 
-  -- If the initial path was a directory, build a tree.
-  -- If it was just one file, the output from rg will be that one file.
+  -- If rg returned a single path that is a file, show just that.
   if #files == 1 and vim.fn.filereadable(files[1]) == 1 and vim.fn.isdirectory(files[1]) == 0 then
     table.insert(lines, "📄 " .. files[1])
   else
-    -- Use a slightly nicer tree-drawing format
-    format_root(tree)
+    format_root(tree, effective_depth)
   end
+
   return utils.make_code_block(table.concat(lines, "\n"), "txt") -- Type: string
 end
 

@@ -117,7 +117,10 @@ config.defaults = {
       enabled = true,
       strategy = "synthetic_tool_call", -- reserved for future strategies
       tools = {
-        { name = "ProjectStructure", args = { path = nil, max_depth = 2 } },
+        {
+          name = "ProjectStructure",
+          args = { path = nil, preferred_depth = 3, adaptive = true, small_file_threshold = 30 },
+        },
       },
     },
   },

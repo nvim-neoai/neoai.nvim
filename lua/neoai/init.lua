@@ -14,6 +14,9 @@ function neoai.setup(opts)
   -- Setup chat module
   chat.setup()
 
+  -- Pre-load bootstrap module (lazy used by chat)
+  pcall(require, "neoai.bootstrap")
+
   -- Create user commands
   neoai.create_commands()
 
