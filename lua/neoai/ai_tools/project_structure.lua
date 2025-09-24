@@ -19,11 +19,7 @@ M.meta = {
         type = "number",
         description = "Preferred display depth (default 3).",
       },
-      -- For backwards compatibility: if provided, treated as preferred_depth.
-      max_depth = {
-        type = "number",
-        description = "Deprecated alias for preferred_depth.",
-      },
+
       adaptive = {
         type = "boolean",
         description = "Enable adaptive depth based on repository size (default true).",
@@ -42,7 +38,7 @@ M.meta = {
   },
 }
 --- Runs the project structure listing (adaptive depth)
--- @param args table { path?: string, preferred_depth?: number, max_depth?: number (deprecated alias), adaptive?: boolean, small_file_threshold?: number, large_file_threshold?: number }
+-- @param args table { path?: string, preferred_depth?: number, adaptive?: boolean, small_file_threshold?: number, large_file_threshold?: number }
 -- @return string
 M.run = function(args) -- Type: function
   args = type(args) == "table" and args or {}
@@ -78,7 +74,7 @@ M.run = function(args) -- Type: function
   if adaptive == nil then
     adaptive = true
   end
-  local preferred_depth = args.preferred_depth or args.max_depth or 3
+  local preferred_depth = args.preferred_depth or 3
   local small_thr = args.small_file_threshold or 50
   local large_thr = args.large_file_threshold or 400
 
@@ -129,7 +125,7 @@ M.run = function(args) -- Type: function
     return dirs, files_n
   end
 
-  local function format_tree(t, prefix, depth, max_depth) -- Type: function
+  local function format_tree(t, prefix, depth, depth_limit) -- Type: function
     local keys = {}
     for k in pairs(t) do
       table.insert(keys, k)
@@ -143,12 +139,12 @@ M.run = function(args) -- Type: function
       local entry_prefix = prefix .. (is_last and "└── " or "├── ")
 
       if type(v) == "table" then
-        if depth >= max_depth then
+        if depth >= depth_limit then
           local dcnt, fcnt = count_descendants(v)
           table.insert(lines, entry_prefix .. "📁 " .. k .. " … (" .. dcnt .. " dirs, " .. fcnt .. " files)")
         else
           table.insert(lines, entry_prefix .. "📁 " .. k)
-          format_tree(v, new_prefix, depth + 1, max_depth)
+          format_tree(v, new_prefix, depth + 1, depth_limit)
         end
       else
         table.insert(lines, entry_prefix .. "📄 " .. k)
@@ -156,7 +152,7 @@ M.run = function(args) -- Type: function
     end
   end
 
-  local function format_root(t, max_depth) -- Type: function
+  local function format_root(t, depth_limit) -- Type: function
     local keys = {}
     for k in pairs(t) do
       table.insert(keys, k)
@@ -170,12 +166,12 @@ M.run = function(args) -- Type: function
       local next_prefix = is_last and "    " or "│   "
 
       if type(v) == "table" then
-        if 1 > max_depth then
+        if 1 > depth_limit then
           local dcnt, fcnt = count_descendants(v)
           table.insert(lines, prefix .. "📁 " .. k .. " … (" .. dcnt .. " dirs, " .. fcnt .. " files)")
         else
           table.insert(lines, prefix .. "📁 " .. k)
-          format_tree(v, next_prefix, 2, max_depth)
+          format_tree(v, next_prefix, 2, depth_limit)
         end
       else
         table.insert(lines, prefix .. "📄 " .. k)

@@ -9,7 +9,6 @@
 - Set `adaptive` to true to adapt depth to repo size (default true).
   - If total files <= `small_file_threshold` (default 50), the listing expands fully.
   - If total files >= `large_file_threshold` (default 400), depth is clamped (typically to 2).
-- For backwards compatibility, `max_depth` is accepted as an alias for `preferred_depth`.
 - Returns a plaintext tree of files/folders up to the effective depth. Collapsed folders show a summary, e.g. `… (N dirs, M files)`.
 
 # FEATURES
