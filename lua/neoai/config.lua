@@ -119,7 +119,13 @@ config.defaults = {
       tools = {
         {
           name = "ProjectStructure",
-          args = { path = nil, preferred_depth = 3, adaptive = true, small_file_threshold = 30 },
+          args = {
+            path = "lua/neoai",
+            preferred_depth = 3,
+            adaptive = true,
+            small_file_threshold = 50,
+            large_file_threshold = 400,
+          },
         },
       },
     },

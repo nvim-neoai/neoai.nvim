@@ -139,7 +139,7 @@ M.run = function(args) -- Type: function
       local entry_prefix = prefix .. (is_last and "└── " or "├── ")
 
       if type(v) == "table" then
-        if depth >= depth_limit then
+        if depth > depth_limit then
           local dcnt, fcnt = count_descendants(v)
           table.insert(lines, entry_prefix .. "📁 " .. k .. " … (" .. dcnt .. " dirs, " .. fcnt .. " files)")
         else
