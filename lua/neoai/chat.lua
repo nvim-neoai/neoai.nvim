@@ -563,26 +563,105 @@ function chat.send_to_ai()
 
   local session_msgs = storage.get_session_messages(chat.chat_state.current_session.id, 100)
 
-  -- If this is the first user message, inject a synthetic turn with the project structure
-  if #session_msgs == 2 and session_msgs[2].type == MESSAGE_TYPES.USER then
-    local project_structure_text = ""
-    local ok, ps_tool = pcall(require, "neoai.ai_tools.project_structure")
-    if ok and ps_tool and type(ps_tool.run) == "function" then
-      local ok_run, ps = pcall(ps_tool.run, { path = nil, max_depth = 2 })
-      if ok_run and type(ps) == "string" then
-        project_structure_text = ps
-      end
-    end
+  -- Bootstrap pre-flight: force selected tool calls before the first real AI turn.
+  do
+    local boot = (chat.chat_state and chat.chat_state.config and chat.chat_state.config.bootstrap) or nil
+    local is_first_turn = (#session_msgs == 2 and session_msgs[2].type == MESSAGE_TYPES.USER)
+    if boot and boot.enabled and is_first_turn then
+      local tools_to_run = (boot.tools and type(boot.tools) == "table") and boot.tools or {}
 
-    if project_structure_text ~= "" then
-      table.insert(messages, {
-        role = "user",
-        content = "To help me with my request, first provide a summary of the project structure.",
-      })
-      table.insert(messages, {
-        role = "assistant",
-        content = "Of course. Here is the project structure:\n\n" .. project_structure_text,
-      })
+      -- Build tool_calls array and run each tool immediately; then persist synthetic messages.
+      local tool_calls = {}
+      local names = {}
+
+      local function gen_id(i)
+        return string.format("bootstrap-%d-%d", os.time(), i)
+      end
+
+      for i, spec in ipairs(tools_to_run) do
+        local name = spec and spec.name
+        if type(name) == "string" and name ~= "" then
+          -- Verify tool exists
+          local found
+          for _, t in ipairs(ai_tools.tools or {}) do
+            if t.meta and t.meta.name == name then
+              found = true
+              break
+            end
+          end
+          if found then
+            local args = spec.args or {}
+            local okj, argstr = pcall(vim.fn.json_encode, args)
+            argstr = okj and argstr or "{}"
+            local id = gen_id(i)
+            table.insert(tool_calls, {
+              id = id,
+              type = "function",
+              ["function"] = { name = name, arguments = argstr },
+            })
+            table.insert(names, name)
+          end
+        end
+      end
+
+      if #tool_calls > 0 then
+        -- Persist an assistant message with tool_calls so the API sees them as already invoked.
+        chat.add_message(
+          MESSAGE_TYPES.ASSISTANT,
+          "**Tool call (bootstrap):** " .. table.concat(names, ", "),
+          {},
+          nil,
+          tool_calls
+        )
+
+        -- Execute each tool and persist the tool result, binding tool_call_id to the synthetic id
+        for idx, call in ipairs(tool_calls) do
+          local call_name = call["function"].name
+          local spec_args = {}
+          for _, sp in ipairs(tools_to_run) do
+            if sp.name == call_name then
+              spec_args = sp.args or {}
+              break
+            end
+          end
+          local tool_mod
+          for _, t in ipairs(ai_tools.tools or {}) do
+            if t.meta and t.meta.name == call_name then
+              tool_mod = t
+              break
+            end
+          end
+
+          local meta = { tool_name = call_name }
+          local content = ""
+          if tool_mod and type(tool_mod.run) == "function" then
+            local ok_run, resp = pcall(tool_mod.run, spec_args)
+            if ok_run then
+              if type(resp) == "table" then
+                content = resp.content or ""
+                if resp.display and resp.display ~= "" then
+                  meta.display = resp.display
+                end
+              else
+                content = type(resp) == "string" and resp or tostring(resp) or ""
+              end
+            else
+              content = "Error executing tool " .. call_name .. ": " .. tostring(resp)
+              vim.notify(content, vim.log.levels.ERROR)
+            end
+          else
+            content = "Tool not found: " .. tostring(call_name)
+            vim.notify(content, vim.log.levels.ERROR)
+          end
+          if content == "" then
+            content = "No response"
+          end
+          chat.add_message(MESSAGE_TYPES.TOOL, content, meta, call.id)
+        end
+
+        -- Refresh session messages so the subsequent payload includes the bootstrap turn
+        session_msgs = storage.get_session_messages(chat.chat_state.current_session.id, 100)
+      end
     end
   end
 
@@ -1293,4 +1372,3 @@ end
 -- Export
 chat.MESSAGE_TYPES = MESSAGE_TYPES
 return chat
-

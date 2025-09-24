@@ -26,11 +26,21 @@
 ---@field height_ratio number  -- Fraction of column height for chat window (0..1). 0.8 => 80% chat, 20% input
 ---@field min_input_lines number -- Minimum lines reserved for input window
 
+---@class BootstrapToolConfig
+---@field name string
+---@field args table|nil
+
+---@class BootstrapConfig
+---@field enabled boolean
+---@field strategy string|nil
+---@field tools BootstrapToolConfig[]
+
 ---@class ChatConfig
 ---@field window WindowConfig
 ---@field auto_scroll boolean
 ---@field database_path string
 ---@field thinking_timeout number|nil
+---@field bootstrap BootstrapConfig|nil
 
 ---@class Config
 ---@field api APISet
@@ -100,6 +110,16 @@ config.defaults = {
 
     -- Streaming/response handling
     thinking_timeout = 300, -- seconds
+
+    -- Bootstrap pre-flight: run selected tools on the first user turn and inject
+    -- synthetic tool_call + tool messages so the model starts with context.
+    bootstrap = {
+      enabled = true,
+      strategy = "synthetic_tool_call", -- reserved for future strategies
+      tools = {
+        { name = "ProjectStructure", args = { path = nil, max_depth = 2 } },
+      },
+    },
   },
 
   presets = {
