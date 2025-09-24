@@ -165,21 +165,34 @@ local function ensure_thinking_visible()
   local target = pos[1] + 1 -- 1-based line number of the header/anchor
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_get_buf(win) == bufnr then
+      -- Temporarily disable scrolloff to avoid re-centring (common with so=999)
+      local orig_so
+      local ok_get_so, so = pcall(function()
+        return vim.wo[win].scrolloff
+      end)
+      if ok_get_so then
+        orig_so = so
+        pcall(function()
+          vim.wo[win].scrolloff = 0
+        end)
+      end
+
       -- Query the current visible range for this window
       local view_ok, top, bot = pcall(function()
         return vim.api.nvim_win_call(win, function()
           return vim.fn.line("w0"), vim.fn.line("w$")
         end)
       end)
+
       if view_ok and top and bot then
         if target < top then
-          -- Scroll just enough upwards to reveal the target at the top
+          -- Reveal just enough upwards: put target at the top
           pcall(vim.api.nvim_win_set_cursor, win, { target, 0 })
           pcall(vim.api.nvim_win_call, win, function()
             vim.cmd("normal! zt")
           end)
         elseif target > bot then
-          -- Scroll just enough downwards to reveal the target at the bottom
+          -- Reveal just enough downwards: put target at the bottom
           pcall(vim.api.nvim_win_set_cursor, win, { target, 0 })
           pcall(vim.api.nvim_win_call, win, function()
             vim.cmd("normal! zb")
@@ -188,10 +201,17 @@ local function ensure_thinking_visible()
           -- Already visible: do nothing
         end
       else
-        -- Fallback: centre the target if we couldn't determine the view bounds
+        -- Fallback: align to bottom rather than centring
         pcall(vim.api.nvim_win_set_cursor, win, { target, 0 })
         pcall(vim.api.nvim_win_call, win, function()
-          vim.cmd("normal! zz")
+          vim.cmd("normal! zb")
+        end)
+      end
+
+      -- Restore user's original scrolloff
+      if orig_so ~= nil then
+        pcall(function()
+          vim.wo[win].scrolloff = orig_so
         end)
       end
     end
