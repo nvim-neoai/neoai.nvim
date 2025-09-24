@@ -371,6 +371,10 @@ local function update_chat_display()
   if not chat.chat_state.is_open or not chat.chat_state.current_session then
     return
   end
+  local bufnr = chat.chat_state.buffers and chat.chat_state.buffers.chat or nil
+  if not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then
+    return
+  end
 
   local lines = {}
   local sess = chat.chat_state.current_session
@@ -426,9 +430,9 @@ local function update_chat_display()
     table.insert(lines, "")
   end
 
-  vim.api.nvim_buf_set_lines(chat.chat_state.buffers.chat, 0, -1, false, lines)
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
   if chat.chat_state.config.auto_scroll then
-    scroll_to_bottom(chat.chat_state.buffers.chat)
+    scroll_to_bottom(bufnr)
   end
 end
 
@@ -578,15 +582,21 @@ function chat.send_to_ai()
     })
   end
 
-  if chat.chat_state.is_open then
-    local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.chat, 0, -1, false)
+  if
+    chat.chat_state.is_open
+    and chat.chat_state.buffers
+    and chat.chat_state.buffers.chat
+    and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
+  then
+    local bufnr = chat.chat_state.buffers.chat
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
     table.insert(lines, "---")
     table.insert(lines, build_assistant_header(os.date("%Y-%m-%d %H:%M:%S")))
     table.insert(lines, "")
 
-    vim.api.nvim_buf_set_lines(chat.chat_state.buffers.chat, 0, -1, false, lines)
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
     if chat.chat_state.config.auto_scroll then
-      scroll_to_bottom(chat.chat_state.buffers.chat)
+      scroll_to_bottom(bufnr)
     end
     start_thinking_animation()
   end
@@ -982,6 +992,10 @@ function chat.update_streaming_message(reason, content, append)
   if not chat.chat_state.is_open or not chat.chat_state.streaming_active then
     return
   end
+  local bufnr = chat.chat_state.buffers and chat.chat_state.buffers.chat or nil
+  if not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then
+    return
+  end
   local display = ""
   -- Insert the thinking duration announcement (if any) at the very top, just once
   local st_ = chat.chat_state and chat.chat_state.thinking or nil
@@ -1011,7 +1025,7 @@ function chat.update_streaming_message(reason, content, append)
       display = prep_status
     end
   end
-  local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.chat, 0, -1, false)
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   for i = #lines, 1, -1 do
     if lines[i]:match("^%*%*Assistant:%*%*") then
       local new_lines = {}
@@ -1025,9 +1039,9 @@ function chat.update_streaming_message(reason, content, append)
         table.insert(new_lines, "  " .. ln)
       end
       table.insert(new_lines, "")
-      vim.api.nvim_buf_set_lines(chat.chat_state.buffers.chat, append and #lines or 0, -1, false, new_lines)
+      vim.api.nvim_buf_set_lines(bufnr, append and #lines or 0, -1, false, new_lines)
       if chat.chat_state.config.auto_scroll then
-        scroll_to_bottom(chat.chat_state.buffers.chat)
+        scroll_to_bottom(bufnr)
       end
       break
     end
@@ -1168,12 +1182,9 @@ end
 
 --- Open chat (if not open) and clear the current session so the user sees a fresh chat
 function chat.open_and_clear()
-  local was_open = chat.chat_state.is_open
-  local ok = chat.clear_session()
-  if not was_open then
-    chat.open()
-  end
-  return ok
+  -- Always attempt to open (ui.open is idempotent and also repairs stale state)
+  chat.open()
+  return chat.clear_session()
 end
 
 function chat.get_stats()
