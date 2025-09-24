@@ -629,6 +629,7 @@ function chat.get_tool_calls(tool_schemas)
 
   -- Track whether we should pause for user review after processing tool calls
   local should_gate = false
+  local deferred_to_open ---@type string|nil
 
   -- Helper to extract orchestration markers from tool output
   local function parse_markers(text)
@@ -652,6 +653,12 @@ function chat.get_tool_calls(tool_schemas)
       for _, tool in ipairs(ai_tools.tools) do
         if tool.meta.name == fn.name then
           tool_found = true
+          -- Force Edit calls to run headlessly and defer user review
+          if fn.name == "Edit" then
+            args = args or {}
+            args.interactive_review = false
+          end
+
           local resp_ok, resp = pcall(tool.run, args)
           local meta = { tool_name = fn.name }
           local content = ""
@@ -697,8 +704,11 @@ function chat.get_tool_calls(tool_schemas)
             st.last_hash = diff_hash or st.last_hash
             chat.chat_state._iter_map[file_key] = st
 
-            if stop and (vim.g.neoai_inline_diff_active == true) then
+            if stop then
               should_gate = true
+              if not deferred_to_open then
+                deferred_to_open = file_key
+              end
             end
           end
 
@@ -714,39 +724,62 @@ function chat.get_tool_calls(tool_schemas)
     end
   end
 
-  -- If we decided to pause for review, bump the await counter once
+  -- If we decided to pause for review, open the deferred diff and gate the loop
+  if should_gate and deferred_to_open and deferred_to_open ~= "" then
+    local opened = false
+    local ok_open, edit_mod = pcall(require, "neoai.ai_tools.edit")
+    if ok_open and edit_mod and type(edit_mod.open_deferred_review) == "function" then
+      local ok2 = false
+      local _, msg = pcall(function()
+        local ok3, _ = edit_mod.open_deferred_review(deferred_to_open)
+        ok2 = ok3 and true or false
+      end)
+      opened = ok2
+    end
+
+    if opened then
+      chat.chat_state._diff_await_id = (chat.chat_state._diff_await_id or 0) + 1
+      local await_id = chat.chat_state._diff_await_id or 0
+
+      chat.add_message(
+        MESSAGE_TYPES.SYSTEM,
+        "Awaiting your review in the inline diff. The assistant will resume once you finish reviewing.",
+        {}
+      )
+      chat.chat_state.streaming_active = false
+
+      chat.chat_state._pending_diff_reviews = (chat.chat_state._pending_diff_reviews or 0) + 1
+      local grp_id = vim.api.nvim_create_augroup("NeoAIDiffAwait_" .. tostring(await_id), { clear = true })
+      vim.api.nvim_create_autocmd("User", {
+        group = grp_id,
+        pattern = "NeoAIInlineDiffClosed",
+        callback = function()
+          -- Reset iteration state for the next cycle after the user closes the diff
+          chat.chat_state._iter_map = {}
+          chat.chat_state._pending_diff_reviews = math.max(0, (chat.chat_state._pending_diff_reviews or 0) - 1)
+          if chat.chat_state._pending_diff_reviews == 0 then
+            pcall(vim.api.nvim_del_augroup_by_id, grp_id)
+            apply_delay(function()
+              chat.send_to_ai()
+            end)
+          end
+        end,
+        once = false,
+      })
+      return
+    end
+  end
+
+  -- If we reach here, either we did not gate, or we failed to open a review (e.g., headless). Continue the loop.
+  -- If we decided to pause for review, bump the await counter once (no-op for continuation path).
   if should_gate then
-    chat.chat_state._diff_await_id = (chat.chat_state._diff_await_id or 0) + 1
+    chat.chat_state._iter_map = {}
   end
 
   local after_await_id = chat.chat_state._diff_await_id or 0
   local new_diffs = math.max(0, after_await_id - before_await_id)
-  if vim.g.neoai_inline_diff_active and new_diffs > 0 then
-    chat.add_message(
-      MESSAGE_TYPES.SYSTEM,
-      "Awaiting your review in the inline diff. The assistant will resume once you finish reviewing.",
-      {}
-    )
-    chat.chat_state.streaming_active = false
-
-    chat.chat_state._pending_diff_reviews = new_diffs
-    local grp_id = vim.api.nvim_create_augroup("NeoAIDiffAwait_" .. tostring(after_await_id), { clear = true })
-    vim.api.nvim_create_autocmd("User", {
-      group = grp_id,
-      pattern = "NeoAIInlineDiffClosed",
-      callback = function()
-        -- Reset iteration state for the next cycle after the user closes the diff
-        chat.chat_state._iter_map = {}
-        chat.chat_state._pending_diff_reviews = math.max(0, (chat.chat_state._pending_diff_reviews or 0) - 1)
-        if chat.chat_state._pending_diff_reviews == 0 then
-          pcall(vim.api.nvim_del_augroup_by_id, grp_id)
-          apply_delay(function()
-            chat.send_to_ai()
-          end)
-        end
-      end,
-      once = false,
-    })
+  if new_diffs > 0 then
+    -- Already handled above when opened; this is a safety no-op path.
     return
   end
 
