@@ -103,8 +103,12 @@ local function fmt_duration(seconds)
   local m = math.floor((seconds % 3600) / 60)
   local s = seconds % 60
   local parts = {}
-  if h > 0 then table.insert(parts, string.format("%dh", h)) end
-  if m > 0 or h > 0 then table.insert(parts, string.format("%dm", m)) end
+  if h > 0 then
+    table.insert(parts, string.format("%dh", h))
+  end
+  if m > 0 or h > 0 then
+    table.insert(parts, string.format("%dm", m))
+  end
   table.insert(parts, string.format("%ds", s))
   return table.concat(parts, " ")
 end
@@ -133,15 +137,40 @@ local function stop_thinking_animation()
     st.timer = nil
   end
   if
-      st.extmark_id
-      and chat.chat_state.buffers
-      and chat.chat_state.buffers.chat
-      and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
+    st.extmark_id
+    and chat.chat_state.buffers
+    and chat.chat_state.buffers.chat
+    and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
   then
     pcall(vim.api.nvim_buf_del_extmark, chat.chat_state.buffers.chat, thinking_ns, st.extmark_id)
   end
   st.extmark_id = nil
   st.active = false
+end
+
+-- Ensure the thinking status (virt_lines) is visible by focusing the header line
+local function ensure_thinking_visible()
+  if not (chat.chat_state and chat.chat_state.config and chat.chat_state.config.auto_scroll) then
+    return
+  end
+  local bufnr = chat.chat_state.buffers and chat.chat_state.buffers.chat or nil
+  local st = chat.chat_state and chat.chat_state.thinking or nil
+  if not (bufnr and vim.api.nvim_buf_is_valid(bufnr) and st and st.extmark_id) then
+    return
+  end
+  local ok, pos = pcall(vim.api.nvim_buf_get_extmark_by_id, bufnr, thinking_ns, st.extmark_id, {})
+  if not ok or not pos or not pos[1] then
+    return
+  end
+  local row = pos[1]
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == bufnr then
+      pcall(vim.api.nvim_win_set_cursor, win, { row + 1, 0 })
+      pcall(vim.api.nvim_win_call, win, function()
+        vim.cmd("normal! zt")
+      end)
+    end
+  end
 end
 
 -- Capture the current thinking duration and mark it to be announced when streaming begins
@@ -190,6 +219,9 @@ local function start_thinking_animation()
     virt_lines_above = false,
   })
 
+  -- Auto-reveal the thinking status so it is visible without manual scrolling
+  ensure_thinking_visible()
+
   st.timer = vim.loop.new_timer()
   st.timer:start(
     0,
@@ -199,12 +231,12 @@ local function start_thinking_animation()
         return
       end
       if
-          not (
-            chat.chat_state
-            and chat.chat_state.buffers
-            and chat.chat_state.buffers.chat
-            and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
-          )
+        not (
+          chat.chat_state
+          and chat.chat_state.buffers
+          and chat.chat_state.buffers.chat
+          and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
+        )
       then
         return
       end
@@ -306,7 +338,7 @@ function chat.setup()
     _ts_suspended = false,
     thinking = { active = false, timer = nil, extmark_id = nil, frame = 1 },
     _diff_await_id = 0, -- This is necessary for the fix.
-    _iter_map = {},     -- Track per-file iteration state for edit+diagnostic loop
+    _iter_map = {}, -- Track per-file iteration state for edit+diagnostic loop
   }
 
   -- Initialise storage backend
@@ -414,7 +446,7 @@ function chat.add_message(type, content, metadata, tool_call_id, tool_calls)
   metadata.timestamp = metadata.timestamp or os.date("%Y-%m-%d %H:%M:%S")
 
   local msg_id =
-      storage.add_message(chat.chat_state.current_session.id, type, content, metadata, tool_call_id, tool_calls)
+    storage.add_message(chat.chat_state.current_session.id, type, content, metadata, tool_call_id, tool_calls)
   if not msg_id then
     vim.notify("Failed to save message to storage", vim.log.levels.ERROR)
   end
@@ -850,7 +882,7 @@ function chat.stream_ai_response(messages)
                   end
                   if tool_call["function"].arguments and tool_call["function"].arguments ~= "" then
                     existing_call["function"].arguments = (existing_call["function"].arguments or "")
-                        .. tool_call["function"].arguments
+                      .. tool_call["function"].arguments
                   end
                 end
                 found = true
