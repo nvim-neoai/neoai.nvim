@@ -131,8 +131,8 @@ config.defaults = {
           name = "SymbolIndex",
           args = {
             path = ".",
-            globs = { "**/*.lua", "**/*.py", "**/*.js", "**/*.ts", "**/*.tsx", "**/*.go", "**/*.rs", "**/*.java" },
-            languages = { "lua", "python", "javascript", "typescript", "tsx", "go", "rust", "java" },
+            -- No explicit languages by default: rely on runtime queries per installed parser.
+            globs = { "**/*" },
             include_docstrings = true,
             include_ranges = true,
             include_signatures = true,

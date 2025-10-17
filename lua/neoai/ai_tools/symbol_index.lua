@@ -158,11 +158,38 @@ local function parse_query_for_lang(lang, query)
   return nil, "No query.parse or parse_query available"
 end
 
+-- Try to load a runtime query from queries/<lang>/symbol_index.scm
+local function get_runtime_query(lang)
+  local ok, ts = pcall(require, "vim.treesitter")
+  if not ok then
+    return nil
+  end
+  -- Neovim 0.10+
+  if ts.query and ts.query.get then
+    local okq, q = pcall(ts.query.get, lang, "symbol_index")
+    if okq then
+      return q
+    end
+  end
+  -- Older API
+  local okrq, ts_query = pcall(require, "vim.treesitter.query")
+  if okrq and ts_query and ts_query.get_query then
+    local okq, q = pcall(ts_query.get_query, lang, "symbol_index")
+    if okq then
+      return q
+    end
+  end
+  return nil
+end
+
 -- Language mappings and queries
 local ext2lang = {
   lua = "lua",
   py = "python",
   js = "javascript",
+  jsx = "javascript",
+  mjs = "javascript",
+  cjs = "javascript",
   ts = "typescript",
   tsx = "tsx",
   go = "go",
@@ -170,7 +197,7 @@ local ext2lang = {
   java = "java",
 }
 
-local queries = {
+local builtin_queries = {
   python = [[
     (function_definition
       name: (identifier) @name
@@ -546,17 +573,19 @@ local function extract_symbols_for_file(file_path, args)
     table.insert(symbols, item)
   end
 
-  if parser and queries[lang] then
-    local tsq, qerr = parse_query_for_lang(lang, queries[lang])
-    if tsq then
+  local tsq = nil
+  local used_any = false
+  if parser then
+    -- 1) Prefer runtime symbol_index query if present
+    local tsq_sym = get_runtime_query(lang)
+    if tsq_sym then
       local tree = parser:parse() and parser:parse()[1]
       local root = tree and tree:root()
       if root then
-        local max_count = 0
-        for _, match in (tsq.iter_matches and tsq:iter_matches(root, bufnr, 0, -1)) or {} do
+        for _, match in (tsq_sym.iter_matches and tsq_sym:iter_matches(root, bufnr, 0, -1)) or {} do
           local cap = {}
           for id, node in pairs(match) do
-            local cname = tsq.captures[id]
+            local cname = tsq_sym.captures[id]
             cap[cname] = node
           end
           if cap["func"] and cap["name"] then
@@ -566,12 +595,170 @@ local function extract_symbols_for_file(file_path, args)
           elseif cap["class"] and cap["name"] then
             push("class", cap["name"], nil, cap["class"])
           end
-          max_count = max_count + 1
-          if #symbols >= max_per_file then
-            break
+          if #symbols >= max_per_file then break end
+        end
+        used_any = used_any or #symbols > 0
+      end
+    end
+
+    -- 2) Fall back to textobjects (common across many languages if installed)
+    if #symbols < max_per_file then
+      local function get_query_for_group(lang2, group)
+        local ok, ts = pcall(require, "vim.treesitter")
+        if not ok then return nil end
+        if ts.query and ts.query.get then
+          local okq, q = pcall(ts.query.get, lang2, group)
+          if okq then return q end
+        end
+        local okrq, ts_query = pcall(require, "vim.treesitter.query")
+        if okrq and ts_query and ts_query.get_query then
+          local okq, q = pcall(ts_query.get_query, lang2, group)
+          if okq then return q end
+        end
+        return nil
+      end
+
+      local tsq_to = get_query_for_group(lang, "textobjects")
+      if tsq_to then
+        local function find_name_node(def_node)
+          if def_node and def_node.child_by_field_name then
+            local nn = def_node:child_by_field_name("name")
+            if nn then return nn end
+          end
+          local wanted = {
+            identifier = true,
+            function_name = true,
+            field_identifier = true,
+            property_identifier = true,
+          }
+          local function walk(n, depth)
+            if not n or depth > 3 then return nil end
+            if wanted[n:type()] then return n end
+            local count = n:named_child_count() or 0
+            for i = 0, count - 1 do
+              local found = walk(n:named_child(i), depth + 1)
+              if found then return found end
+            end
+            return nil
+          end
+          return walk(def_node, 0)
+        end
+
+        local tree = parser:parse() and parser:parse()[1]
+        local root = tree and tree:root()
+        if root then
+          for _, match in (tsq_to.iter_matches and tsq_to:iter_matches(root, bufnr, 0, -1)) or {} do
+            for id, node in pairs(match) do
+              local cname = tsq_to.captures[id] or ""
+              local kind
+              if cname:find("function") then kind = "function" end
+              if not kind and cname:find("method") then kind = "method" end
+              if not kind and cname:find("class") then kind = "class" end
+              if kind then
+                local name_node = find_name_node(node)
+                if name_node then
+                  push(kind, name_node, nil, node)
+                end
+              end
+              if #symbols >= max_per_file then break end
+            end
+            if #symbols >= max_per_file then break end
+          end
+          used_any = used_any or #symbols > 0
+        end
+      end
+    end
+
+    -- 3) Fall back to locals (definition.* captures provided by many languages)
+    if #symbols < max_per_file then
+      local function get_query_for_group(lang2, group)
+        local ok, ts = pcall(require, "vim.treesitter")
+        if not ok then return nil end
+        if ts.query and ts.query.get then
+          local okq, q = pcall(ts.query.get, lang2, group)
+          if okq then return q end
+        end
+        local okrq, ts_query = pcall(require, "vim.treesitter.query")
+        if okrq and ts_query and ts_query.get_query then
+          local okq, q = pcall(ts_query.get_query, lang2, group)
+          if okq then return q end
+        end
+        return nil
+      end
+
+      local tsq_loc = get_query_for_group(lang, "locals")
+      if tsq_loc then
+        local function ascend_to_container(n)
+          local want = {
+            function_declaration = true,
+            function_definition = true,
+            local_function = true,
+            method_declaration = true,
+            function_item = true,
+            constructor_declaration = true,
+            class_declaration = true,
+            class_definition = true,
+            interface_declaration = true,
+          }
+          local steps = 0
+          while n and steps < 6 do
+            if want[n:type()] then return n end
+            n = n:parent()
+            steps = steps + 1
+          end
+          return nil
+        end
+
+        local tree = parser:parse() and parser:parse()[1]
+        local root = tree and tree:root()
+        if root then
+          for _, match in (tsq_loc.iter_matches and tsq_loc:iter_matches(root, bufnr, 0, -1)) or {} do
+            for id, node in pairs(match) do
+              local cname = tsq_loc.captures[id] or ""
+              local kind
+              if cname:find("definition%.function") then kind = "function" end
+              if not kind and cname:find("definition%.method") then kind = "method" end
+              if not kind and (cname:find("definition%.class") or cname:find("definition%.interface")) then kind = "class" end
+              if not kind and cname:find("definition%.constructor") then kind = "method" end
+              if kind then
+                local def = ascend_to_container(node) or node
+                push(kind, node, nil, def)
+              end
+              if #symbols >= max_per_file then break end
+            end
+            if #symbols >= max_per_file then break end
+          end
+          used_any = used_any or #symbols > 0
+        end
+      end
+    end
+
+    -- 4) Built-in queries as a final Tree-sitter-based fallback
+    if not used_any and builtin_queries[lang] then
+      local tsq_builtin = select(1, parse_query_for_lang(lang, builtin_queries[lang]))
+      if tsq_builtin then
+        local tree = parser:parse() and parser:parse()[1]
+        local root = tree and tree:root()
+        if root then
+          for _, match in (tsq_builtin.iter_matches and tsq_builtin:iter_matches(root, bufnr, 0, -1)) or {} do
+            local cap = {}
+            for id, node in pairs(match) do
+              local cname = tsq_builtin.captures[id]
+              cap[cname] = node
+            end
+            if cap["func"] and cap["name"] then
+              push("function", cap["name"], cap["params"], cap["func"])
+            elseif cap["method"] and cap["name"] then
+              push("method", cap["name"], cap["params"], cap["method"])
+            elseif cap["class"] and cap["name"] then
+              push("class", cap["name"], nil, cap["class"])
+            end
+            if #symbols >= max_per_file then break end
           end
         end
       end
+    end
+  end
     end
   end
 
@@ -646,13 +833,22 @@ M.run = function(args)
     if fcount >= max_files then
       break
     end
-    local ext = file_extension(f or "")
-    local lang_by_ext = ext and ext2lang[ext]
-    if not next(include_langs) or (lang_by_ext and include_langs[lang_by_ext]) then
+    for _, f in ipairs(files) do
+      if fcount >= max_files then break end
       local res = extract_symbols_for_file(f, args)
       if res and type(res) == "table" then
-        table.insert(results, res)
-        fcount = fcount + 1
+        local lang_ok = true
+        if next(include_langs) then
+          lang_ok = res.language and include_langs[res.language] or false
+        end
+        if lang_ok then
+          table.insert(results, res)
+          fcount = fcount + 1
+          if type(res.symbols) == "table" then scount = scount + #res.symbols end
+        end
+      end
+    end
+
         if type(res.symbols) == "table" then
           scount = scount + #res.symbols
         end

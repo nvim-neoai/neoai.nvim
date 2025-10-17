@@ -574,7 +574,56 @@ end
 
 -- Send to AI
 function chat.send_to_ai()
-  local data = { tools = chat.format_tools() }
+  -- Prepare template data: tools and optional AGENTS.md content
+  local agents_md = nil
+  do
+    -- Try to locate AGENTS.md at repo root or current working directory
+    local candidate_paths = {}
+    -- 1) If inside a git repo, detect its root
+    local git_root = nil
+    pcall(function()
+      local handle = io.popen("git rev-parse --show-toplevel 2>/dev/null")
+      if handle then
+        local out = handle:read("*a") or ""
+        handle:close()
+        out = (out:gsub("\r", ""):gsub("\n", ""))
+        if out ~= "" then
+          git_root = out
+        end
+      end
+    end)
+    local cwd = vim.loop.cwd()
+    local roots = {}
+    if git_root and git_root ~= "" then
+      table.insert(roots, git_root)
+    end
+    if cwd and cwd ~= git_root then
+      table.insert(roots, cwd)
+    end
+
+    for _, root in ipairs(roots) do
+      table.insert(candidate_paths, root .. "/AGENTS.md")
+      table.insert(candidate_paths, root .. "/agents.md")
+    end
+
+    for _, path in ipairs(candidate_paths) do
+      local f = io.open(path, "r")
+      if f then
+        local content = f:read("*a") or ""
+        f:close()
+        content = (content:gsub("^%s+", ""):gsub("%s+$", ""))
+        if content ~= "" then
+          agents_md = "---\n## 📘 Project AGENTS.md\n\n" .. content .. "\n---"
+          break
+        end
+      end
+    end
+  end
+
+  local data = {
+    tools = chat.format_tools(),
+    agents = agents_md or "",
+  }
 
   local system_prompt = prompt.get_system_prompt(data)
   local messages = {

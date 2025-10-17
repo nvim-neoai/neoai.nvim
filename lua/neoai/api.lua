@@ -31,6 +31,9 @@ end
 function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
   -- Track if we've already reported an error to avoid duplicate notifications
   local error_reported = false
+  -- Buffer non-SSE stdout to recover JSON error bodies when the server doesn't stream
+  local non_sse_buf = {}
+  local http_status -- captured from curl --write-out
   -- Create a new job and mark it as not cancelled
 
   local basic_payload = {
@@ -60,7 +63,6 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
       "--show-error", -- ensure errors are printed even in silent mode
       "--no-buffer",
       "--location",
-      "--fail", -- make curl return non-zero on HTTP 4xx/5xx early (widely supported)
       conf.url,
       "--header",
       "Content-Type: application/json",
@@ -68,6 +70,9 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
       api_key,
       "--data-binary",
       "@-",
+      -- Always emit the HTTP status code at the end so we can report it if no JSON error was parsed
+      "--write-out",
+      "\nHTTPSTATUS:%{http_code}\n",
     },
     -- Send JSON payload via stdin to avoid hitting argv length limits
     writer = payload,
@@ -173,25 +178,41 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
             end
           end)
         else
-          -- Non-SSE output: attempt to detect JSON error bodies and surface them early
+          -- Non-SSE output: capture HTTP status and buffer any JSON body to surface real error messages
           local trimmed = vim.trim(data_line)
-          if not error_reported and trimmed ~= "" and (trimmed:sub(1, 1) == "{" or trimmed:sub(1, 1) == "[") then
-            local ok, decoded = pcall(vim.fn.json_decode, trimmed)
-            if ok and decoded then
-              local err_msg
-              if type(decoded.error) == "table" then
-                err_msg = decoded.error.message or decoded.error.type or vim.inspect(decoded.error)
-              elseif decoded.error ~= nil then
-                err_msg = tostring(decoded.error)
-              elseif type(decoded) == "table" and decoded.message and not decoded.choices then
-                -- Some providers return { message = "...", type = "..." } on errors
-                err_msg = decoded.message
-              end
-              if err_msg and err_msg ~= "" then
-                error_reported = true
-                vim.schedule(function()
-                  on_error("API error: " .. tostring(err_msg))
-                end)
+          -- Capture the emitted HTTP status code from curl
+          local st = trimmed:match("^HTTPSTATUS:(%d+)$")
+          if st then
+            http_status = tonumber(st)
+          else
+            -- Accumulate non-SSE lines; many providers return a single-line JSON error but we guard for multi-line too
+            if trimmed ~= "" then
+              table.insert(non_sse_buf, trimmed)
+            end
+            if not error_reported then
+              local aggregated = table.concat(non_sse_buf, "\n")
+              local agg_trim = vim.trim(aggregated)
+              local first = agg_trim:sub(1, 1)
+              if first == "{" or first == "[" then
+                local ok, decoded = pcall(vim.fn.json_decode, agg_trim)
+                if ok and decoded then
+                  local err_msg
+                  if type(decoded.error) == "table" then
+                    err_msg = decoded.error.message or decoded.error.type or vim.inspect(decoded.error)
+                  elseif decoded.error ~= nil then
+                    err_msg = tostring(decoded.error)
+                  elseif type(decoded) == "table" and decoded.message and not decoded.choices then
+                    -- Some providers return { message = "...", type = "..." } on errors
+                    err_msg = decoded.message
+                  end
+                  if err_msg and err_msg ~= "" then
+                    error_reported = true
+                    vim.schedule(function()
+                      local prefix = http_status and ("HTTP " .. tostring(http_status) .. ": ") or ""
+                      on_error(prefix .. "API error: " .. tostring(err_msg))
+                    end)
+                  end
+                end
               end
             end
           end
@@ -202,7 +223,7 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
       if not line or line == "" then
         return
       end
-      -- With --show-error, curl writes human-readable errors here. Surface immediately.
+      -- With --show-error, curl writes human-readable errors here. Surface immediately for network/transport errors.
       if not error_reported then
         error_reported = true
         vim.schedule(function()
@@ -219,8 +240,16 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
             if on_cancel then
               on_cancel()
             end
-          elseif exit_code ~= 0 then
-            on_error(exit_code)
+          else
+            -- If curl failed at the transport level
+            if exit_code ~= 0 then
+              on_error(exit_code)
+            else
+              -- Transport OK but we may still have an HTTP error without a parsed body
+              if not error_reported and http_status and http_status >= 400 then
+                on_error("HTTP " .. tostring(http_status) .. " error")
+              end
+            end
           end
         end
       end)
