@@ -21,11 +21,30 @@ local function get_rightmost_win()
   return rightmost_win
 end
 
+--- Determine whether our UI state still points to valid buffers and windows
+---@return boolean
+local function ui_is_valid()
+  local b = chat_state.buffers or {}
+  local w = chat_state.windows or {}
+  local b_chat_ok = (b.chat ~= nil) and vim.api.nvim_buf_is_valid(b.chat)
+  local b_input_ok = (b.input ~= nil) and vim.api.nvim_buf_is_valid(b.input)
+  local w_chat_ok = (w.chat ~= nil) and vim.api.nvim_win_is_valid(w.chat)
+  local w_input_ok = (w.input ~= nil) and vim.api.nvim_win_is_valid(w.input)
+  return b_chat_ok and b_input_ok and w_chat_ok and w_input_ok
+end
+
 --- Open NeoAI chat UI
 --- Opens the NeoAI chat UI by creating necessary windows and buffers.
 ---@return nil
 function ui.open()
-  if chat_state.is_open then
+  -- Recover from stale state where buffers/windows were manually closed
+  if chat_state.is_open and not ui_is_valid() then
+    -- Force a clean close so we can recreate everything
+    pcall(function()
+      ui.close()
+    end)
+  end
+  if chat_state.is_open and ui_is_valid() then
     return
   end
 
@@ -42,6 +61,29 @@ function ui.open()
   vim.api.nvim_buf_set_option(chat_state.buffers.input, "filetype", "markdown")
   vim.api.nvim_buf_set_option(chat_state.buffers.input, "buftype", "nofile")
   vim.api.nvim_buf_set_option(chat_state.buffers.input, "bufhidden", "wipe")
+
+  -- Ensure manual buffer wipes close the UI state cleanly
+  local grp = vim.api.nvim_create_augroup("NeoAIUI", { clear = false })
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    group = grp,
+    buffer = chat_state.buffers.chat,
+    callback = function()
+      pcall(function()
+        require("neoai.chat").close()
+      end)
+    end,
+    desc = "Close NeoAI UI when chat buffer is wiped",
+  })
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    group = grp,
+    buffer = chat_state.buffers.input,
+    callback = function()
+      pcall(function()
+        require("neoai.chat").close()
+      end)
+    end,
+    desc = "Close NeoAI UI when input buffer is wiped",
+  })
 
   -- Open vertical split at far right
   local right_most_win = get_rightmost_win()
@@ -103,6 +145,10 @@ end
 ---@return nil
 function ui.close()
   if not chat_state.is_open then
+    -- Even if the flag says closed, ensure we drop any stale handles
+    chat_state.windows = {}
+    chat_state.buffers = {}
+    chat_state.is_open = false
     return
   end
 

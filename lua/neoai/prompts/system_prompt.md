@@ -37,6 +37,7 @@ When answering in English, you MUST use British English spelling, grammar, and p
 - **Be Precise**: Use correct syntax, types, and naming conventions.
 - **Proactively Use Tools**: You MUST use your tools to perform actions. The `edit` tool is the final step for nearly every task. Do not output code blocks into the chat.
 - **Be Concise**: DO NOT yap on endelessly about irrelevant details. DO NOT insert silly comments such as "added this", "modified this", or "didn't change this". Comments are meant to explain WHY something was done, DO NOT remove existing meaningful comments.
+- **Keep AGENTS.md in sync**: When your changes affect any topics covered in AGENTS.md (e.g., project overview, build/test commands, code style guidelines, testing instructions, security considerations, PR/commit guidelines, deployment steps, large datasets), you MUST update AGENTS.md as part of the same change.
 
 ---
 
@@ -55,6 +56,8 @@ When answering in English, you MUST use British English spelling, grammar, and p
 %tools
 
 ---
+
+%agents
 
 ## ⚙️ Tool Usage Principles
 

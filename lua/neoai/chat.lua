@@ -103,8 +103,12 @@ local function fmt_duration(seconds)
   local m = math.floor((seconds % 3600) / 60)
   local s = seconds % 60
   local parts = {}
-  if h > 0 then table.insert(parts, string.format("%dh", h)) end
-  if m > 0 or h > 0 then table.insert(parts, string.format("%dm", m)) end
+  if h > 0 then
+    table.insert(parts, string.format("%dh", h))
+  end
+  if m > 0 or h > 0 then
+    table.insert(parts, string.format("%dm", m))
+  end
   table.insert(parts, string.format("%ds", s))
   return table.concat(parts, " ")
 end
@@ -133,15 +137,85 @@ local function stop_thinking_animation()
     st.timer = nil
   end
   if
-      st.extmark_id
-      and chat.chat_state.buffers
-      and chat.chat_state.buffers.chat
-      and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
+    st.extmark_id
+    and chat.chat_state.buffers
+    and chat.chat_state.buffers.chat
+    and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
   then
     pcall(vim.api.nvim_buf_del_extmark, chat.chat_state.buffers.chat, thinking_ns, st.extmark_id)
   end
   st.extmark_id = nil
   st.active = false
+end
+
+-- Ensure the thinking status (virt_lines) is visible with minimal scrolling
+local function ensure_thinking_visible()
+  if not (chat.chat_state and chat.chat_state.config and chat.chat_state.config.auto_scroll) then
+    return
+  end
+  local bufnr = chat.chat_state.buffers and chat.chat_state.buffers.chat or nil
+  local st = chat.chat_state and chat.chat_state.thinking or nil
+  if not (bufnr and vim.api.nvim_buf_is_valid(bufnr) and st and st.extmark_id) then
+    return
+  end
+  local ok, pos = pcall(vim.api.nvim_buf_get_extmark_by_id, bufnr, thinking_ns, st.extmark_id, {})
+  if not ok or not pos or pos[1] == nil then
+    return
+  end
+  local target = pos[1] + 1 -- 1-based line number of the header/anchor
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == bufnr then
+      -- Temporarily disable scrolloff to avoid re-centring (common with so=999)
+      local orig_so
+      local ok_get_so, so = pcall(function()
+        return vim.wo[win].scrolloff
+      end)
+      if ok_get_so then
+        orig_so = so
+        pcall(function()
+          vim.wo[win].scrolloff = 0
+        end)
+      end
+
+      -- Query the current visible range for this window
+      local view_ok, top, bot = pcall(function()
+        return vim.api.nvim_win_call(win, function()
+          return vim.fn.line("w0"), vim.fn.line("w$")
+        end)
+      end)
+
+      if view_ok and top and bot then
+        if target < top then
+          -- Reveal just enough upwards: put target at the top
+          pcall(vim.api.nvim_win_set_cursor, win, { target, 0 })
+          pcall(vim.api.nvim_win_call, win, function()
+            vim.cmd("normal! zt")
+          end)
+        elseif target > bot then
+          -- Reveal just enough downwards: put target at the bottom
+          pcall(vim.api.nvim_win_set_cursor, win, { target, 0 })
+          pcall(vim.api.nvim_win_call, win, function()
+            vim.cmd("normal! zb")
+          end)
+        else
+          -- Already visible: do nothing
+        end
+      else
+        -- Fallback: align to bottom rather than centring
+        pcall(vim.api.nvim_win_set_cursor, win, { target, 0 })
+        pcall(vim.api.nvim_win_call, win, function()
+          vim.cmd("normal! zb")
+        end)
+      end
+
+      -- Restore user's original scrolloff
+      if orig_so ~= nil then
+        pcall(function()
+          vim.wo[win].scrolloff = orig_so
+        end)
+      end
+    end
+  end
 end
 
 -- Capture the current thinking duration and mark it to be announced when streaming begins
@@ -190,6 +264,9 @@ local function start_thinking_animation()
     virt_lines_above = false,
   })
 
+  -- Auto-reveal the thinking status so it is visible without manual scrolling
+  ensure_thinking_visible()
+
   st.timer = vim.loop.new_timer()
   st.timer:start(
     0,
@@ -199,12 +276,12 @@ local function start_thinking_animation()
         return
       end
       if
-          not (
-            chat.chat_state
-            and chat.chat_state.buffers
-            and chat.chat_state.buffers.chat
-            and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
-          )
+        not (
+          chat.chat_state
+          and chat.chat_state.buffers
+          and chat.chat_state.buffers.chat
+          and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
+        )
       then
         return
       end
@@ -306,7 +383,7 @@ function chat.setup()
     _ts_suspended = false,
     thinking = { active = false, timer = nil, extmark_id = nil, frame = 1 },
     _diff_await_id = 0, -- This is necessary for the fix.
-    _iter_map = {},     -- Track per-file iteration state for edit+diagnostic loop
+    _iter_map = {}, -- Track per-file iteration state for edit+diagnostic loop
   }
 
   -- Initialise storage backend
@@ -337,6 +414,10 @@ end
 -- Update chat display
 local function update_chat_display()
   if not chat.chat_state.is_open or not chat.chat_state.current_session then
+    return
+  end
+  local bufnr = chat.chat_state.buffers and chat.chat_state.buffers.chat or nil
+  if not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then
     return
   end
 
@@ -394,9 +475,9 @@ local function update_chat_display()
     table.insert(lines, "")
   end
 
-  vim.api.nvim_buf_set_lines(chat.chat_state.buffers.chat, 0, -1, false, lines)
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
   if chat.chat_state.config.auto_scroll then
-    scroll_to_bottom(chat.chat_state.buffers.chat)
+    scroll_to_bottom(bufnr)
   end
 end
 
@@ -414,7 +495,7 @@ function chat.add_message(type, content, metadata, tool_call_id, tool_calls)
   metadata.timestamp = metadata.timestamp or os.date("%Y-%m-%d %H:%M:%S")
 
   local msg_id =
-      storage.add_message(chat.chat_state.current_session.id, type, content, metadata, tool_call_id, tool_calls)
+    storage.add_message(chat.chat_state.current_session.id, type, content, metadata, tool_call_id, tool_calls)
   if not msg_id then
     vim.notify("Failed to save message to storage", vim.log.levels.ERROR)
   end
@@ -493,7 +574,56 @@ end
 
 -- Send to AI
 function chat.send_to_ai()
-  local data = { tools = chat.format_tools() }
+  -- Prepare template data: tools and optional AGENTS.md content
+  local agents_md = nil
+  do
+    -- Try to locate AGENTS.md at repo root or current working directory
+    local candidate_paths = {}
+    -- 1) If inside a git repo, detect its root
+    local git_root = nil
+    pcall(function()
+      local handle = io.popen("git rev-parse --show-toplevel 2>/dev/null")
+      if handle then
+        local out = handle:read("*a") or ""
+        handle:close()
+        out = (out:gsub("\r", ""):gsub("\n", ""))
+        if out ~= "" then
+          git_root = out
+        end
+      end
+    end)
+    local cwd = vim.loop.cwd()
+    local roots = {}
+    if git_root and git_root ~= "" then
+      table.insert(roots, git_root)
+    end
+    if cwd and cwd ~= git_root then
+      table.insert(roots, cwd)
+    end
+
+    for _, root in ipairs(roots) do
+      table.insert(candidate_paths, root .. "/AGENTS.md")
+      table.insert(candidate_paths, root .. "/agents.md")
+    end
+
+    for _, path in ipairs(candidate_paths) do
+      local f = io.open(path, "r")
+      if f then
+        local content = f:read("*a") or ""
+        f:close()
+        content = (content:gsub("^%s+", ""):gsub("%s+$", ""))
+        if content ~= "" then
+          agents_md = "---\n## 📘 Project AGENTS.md\n\n" .. content .. "\n---"
+          break
+        end
+      end
+    end
+  end
+
+  local data = {
+    tools = chat.format_tools(),
+    agents = agents_md or "",
+  }
 
   local system_prompt = prompt.get_system_prompt(data)
   local messages = {
@@ -502,26 +632,14 @@ function chat.send_to_ai()
 
   local session_msgs = storage.get_session_messages(chat.chat_state.current_session.id, 100)
 
-  -- If this is the first user message, inject a synthetic turn with the project structure
-  if #session_msgs == 2 and session_msgs[2].type == MESSAGE_TYPES.USER then
-    local project_structure_text = ""
-    local ok, ps_tool = pcall(require, "neoai.ai_tools.project_structure")
-    if ok and ps_tool and type(ps_tool.run) == "function" then
-      local ok_run, ps = pcall(ps_tool.run, { path = nil, max_depth = 2 })
-      if ok_run and type(ps) == "string" then
-        project_structure_text = ps
-      end
-    end
-
-    if project_structure_text ~= "" then
-      table.insert(messages, {
-        role = "user",
-        content = "To help me with my request, first provide a summary of the project structure.",
-      })
-      table.insert(messages, {
-        role = "assistant",
-        content = "Of course. Here is the project structure:\n\n" .. project_structure_text,
-      })
+  -- Bootstrap pre-flight: force selected tool calls before the first real AI turn.
+  do
+    local boot = (chat.chat_state and chat.chat_state.config and chat.chat_state.config.bootstrap) or nil
+    local is_first_turn = (#session_msgs == 2 and session_msgs[2].type == MESSAGE_TYPES.USER)
+    if boot and boot.enabled and is_first_turn then
+      require("neoai.bootstrap").run_preflight(chat, boot)
+      -- Refresh session messages so the subsequent payload includes the bootstrap turn
+      session_msgs = storage.get_session_messages(chat.chat_state.current_session.id, 100)
     end
   end
 
@@ -546,15 +664,21 @@ function chat.send_to_ai()
     })
   end
 
-  if chat.chat_state.is_open then
-    local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.chat, 0, -1, false)
+  if
+    chat.chat_state.is_open
+    and chat.chat_state.buffers
+    and chat.chat_state.buffers.chat
+    and vim.api.nvim_buf_is_valid(chat.chat_state.buffers.chat)
+  then
+    local bufnr = chat.chat_state.buffers.chat
+    local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
     table.insert(lines, "---")
     table.insert(lines, build_assistant_header(os.date("%Y-%m-%d %H:%M:%S")))
     table.insert(lines, "")
 
-    vim.api.nvim_buf_set_lines(chat.chat_state.buffers.chat, 0, -1, false, lines)
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
     if chat.chat_state.config.auto_scroll then
-      scroll_to_bottom(chat.chat_state.buffers.chat)
+      scroll_to_bottom(bufnr)
     end
     start_thinking_animation()
   end
@@ -565,156 +689,7 @@ end
 -- Tool call handling
 ---@param tool_schemas table
 function chat.get_tool_calls(tool_schemas)
-  if #tool_schemas == 0 then
-    vim.notify("No valid tool calls found", vim.log.levels.WARN)
-    chat.chat_state.streaming_active = false
-    return
-  end
-
-  local before_await_id = chat.chat_state._diff_await_id or 0
-  local call_names = {}
-  for _, sc in ipairs(tool_schemas) do
-    if sc and sc["function"] and sc["function"].name and sc["function"].name ~= "" then
-      table.insert(call_names, sc["function"].name)
-    end
-  end
-  local call_title = "**Tool call**"
-  if #call_names > 0 then
-    call_title = "**Tool call:** " .. table.concat(call_names, ", ")
-  end
-  chat.add_message(MESSAGE_TYPES.ASSISTANT, call_title, {}, nil, tool_schemas)
-  local completed = 0
-
-  -- Track whether we should pause for user review after processing tool calls
-  local should_gate = false
-
-  -- Helper to extract orchestration markers from tool output
-  local function parse_markers(text)
-    if type(text) ~= "string" or text == "" then
-      return nil, nil
-    end
-    local hash = text:match("NeoAI%-Diff%-Hash:%s*([%w_%-]+)")
-    local diag = text:match("NeoAI%-Diagnostics%-Count:%s*(%d+)")
-    return hash, (diag and tonumber(diag) or nil)
-  end
-
-  for _, schema in ipairs(tool_schemas) do
-    if schema.type == "function" and schema["function"] and schema["function"].name then
-      local fn = schema["function"]
-      local ok, args = pcall(vim.fn.json_decode, fn.arguments or "")
-      if not ok then
-        args = {}
-      end
-
-      local tool_found = false
-      for _, tool in ipairs(ai_tools.tools) do
-        if tool.meta.name == fn.name then
-          tool_found = true
-          local resp_ok, resp = pcall(tool.run, args)
-          local meta = { tool_name = fn.name }
-          local content = ""
-          if not resp_ok then
-            content = "Error executing tool " .. fn.name .. ": " .. tostring(resp)
-            vim.notify(content, vim.log.levels.ERROR)
-          else
-            if type(resp) == "table" then
-              content = resp.content or ""
-              if resp.display and resp.display ~= "" then
-                meta.display = resp.display
-              end
-            else
-              content = type(resp) == "string" and resp or tostring(resp) or ""
-            end
-          end
-          if content == "" then
-            content = "No response"
-          end
-          chat.add_message(MESSAGE_TYPES.TOOL, tostring(content), meta, schema.id)
-
-          -- Forced iteration control: evaluate stop conditions after Edit tool
-          if fn.name == "Edit" then
-            local file_key = (args and args.file_path) or "<unknown>"
-            chat.chat_state._iter_map = chat.chat_state._iter_map or {}
-            local st = chat.chat_state._iter_map[file_key] or { count = 0, last_hash = nil }
-            st.count = (st.count or 0) + 1
-
-            local diff_hash, diag_count = parse_markers(content)
-            local unchanged = (st.last_hash ~= nil and diff_hash ~= nil and st.last_hash == diff_hash)
-
-            local stop = false
-            if diag_count ~= nil and diag_count <= 0 then
-              stop = true
-            end
-            if unchanged then
-              stop = true
-            end
-            if st.count >= 3 then
-              stop = true
-            end
-
-            st.last_hash = diff_hash or st.last_hash
-            chat.chat_state._iter_map[file_key] = st
-
-            if stop and (vim.g.neoai_inline_diff_active == true) then
-              should_gate = true
-            end
-          end
-
-          break
-        end
-      end
-      if not tool_found then
-        local err = "Tool not found: " .. fn.name
-        vim.notify(err, vim.log.levels.ERROR)
-        chat.add_message(MESSAGE_TYPES.TOOL, err, {}, schema.id)
-      end
-      completed = completed + 1
-    end
-  end
-
-  -- If we decided to pause for review, bump the await counter once
-  if should_gate then
-    chat.chat_state._diff_await_id = (chat.chat_state._diff_await_id or 0) + 1
-  end
-
-  local after_await_id = chat.chat_state._diff_await_id or 0
-  local new_diffs = math.max(0, after_await_id - before_await_id)
-  if vim.g.neoai_inline_diff_active and new_diffs > 0 then
-    chat.add_message(
-      MESSAGE_TYPES.SYSTEM,
-      "Awaiting your review in the inline diff. The assistant will resume once you finish reviewing.",
-      {}
-    )
-    chat.chat_state.streaming_active = false
-
-    chat.chat_state._pending_diff_reviews = new_diffs
-    local grp_id = vim.api.nvim_create_augroup("NeoAIDiffAwait_" .. tostring(after_await_id), { clear = true })
-    vim.api.nvim_create_autocmd("User", {
-      group = grp_id,
-      pattern = "NeoAIInlineDiffClosed",
-      callback = function()
-        -- Reset iteration state for the next cycle after the user closes the diff
-        chat.chat_state._iter_map = {}
-        chat.chat_state._pending_diff_reviews = math.max(0, (chat.chat_state._pending_diff_reviews or 0) - 1)
-        if chat.chat_state._pending_diff_reviews == 0 then
-          pcall(vim.api.nvim_del_augroup_by_id, grp_id)
-          apply_delay(function()
-            chat.send_to_ai()
-          end)
-        end
-      end,
-      once = false,
-    })
-    return
-  end
-
-  if completed > 0 then
-    apply_delay(function()
-      chat.send_to_ai()
-    end)
-  else
-    chat.chat_state.streaming_active = false
-  end
+  return require("neoai.tool_runner").run_tool_calls(chat, tool_schemas)
 end
 
 -- Format tools
@@ -850,7 +825,7 @@ function chat.stream_ai_response(messages)
                   end
                   if tool_call["function"].arguments and tool_call["function"].arguments ~= "" then
                     existing_call["function"].arguments = (existing_call["function"].arguments or "")
-                        .. tool_call["function"].arguments
+                      .. tool_call["function"].arguments
                   end
                 end
                 found = true
@@ -950,6 +925,10 @@ function chat.update_streaming_message(reason, content, append)
   if not chat.chat_state.is_open or not chat.chat_state.streaming_active then
     return
   end
+  local bufnr = chat.chat_state.buffers and chat.chat_state.buffers.chat or nil
+  if not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then
+    return
+  end
   local display = ""
   -- Insert the thinking duration announcement (if any) at the very top, just once
   local st_ = chat.chat_state and chat.chat_state.thinking or nil
@@ -979,7 +958,7 @@ function chat.update_streaming_message(reason, content, append)
       display = prep_status
     end
   end
-  local lines = vim.api.nvim_buf_get_lines(chat.chat_state.buffers.chat, 0, -1, false)
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   for i = #lines, 1, -1 do
     if lines[i]:match("^%*%*Assistant:%*%*") then
       local new_lines = {}
@@ -993,9 +972,9 @@ function chat.update_streaming_message(reason, content, append)
         table.insert(new_lines, "  " .. ln)
       end
       table.insert(new_lines, "")
-      vim.api.nvim_buf_set_lines(chat.chat_state.buffers.chat, append and #lines or 0, -1, false, new_lines)
+      vim.api.nvim_buf_set_lines(bufnr, append and #lines or 0, -1, false, new_lines)
       if chat.chat_state.config.auto_scroll then
-        scroll_to_bottom(chat.chat_state.buffers.chat)
+        scroll_to_bottom(bufnr)
       end
       break
     end
@@ -1136,12 +1115,9 @@ end
 
 --- Open chat (if not open) and clear the current session so the user sees a fresh chat
 function chat.open_and_clear()
-  local was_open = chat.chat_state.is_open
-  local ok = chat.clear_session()
-  if not was_open then
-    chat.open()
-  end
-  return ok
+  -- Always attempt to open (ui.open is idempotent and also repairs stale state)
+  chat.open()
+  return chat.clear_session()
 end
 
 function chat.get_stats()

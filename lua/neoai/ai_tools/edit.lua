@@ -7,6 +7,10 @@ local M = {}
 -- State to hold original content of the buffer being edited.
 local active_edit_state = {}
 
+-- Accumulator for deferred, end-of-loop reviews. Keyed by absolute path.
+-- Each entry: { baseline = {lines...}, latest = {lines...} }
+local deferred_reviews = {}
+
 --[[
   UTILITY FUNCTIONS (with improved indentation handling)
 --]]
@@ -122,7 +126,7 @@ end
 M.meta = {
   name = "Edit",
   description = utils.read_description("edit")
-      .. " The 'edits' should be provided in the order they appear in the file.",
+    .. " The 'edits' should be provided in the order they appear in the file.",
   parameters = {
     type = "object",
     properties = {
@@ -133,6 +137,10 @@ M.meta = {
       ensure_dir = {
         type = "boolean",
         description = "Create parent directories if they do not exist (default: true)",
+      },
+      interactive_review = {
+        type = "boolean",
+        description = "When false and a UI is present, do not open the inline diff UI yet; stage changes for a deferred review and do not write to disk. Only when no UI is present will changes be applied headlessly.",
       },
       edits = {
         type = "array",
@@ -175,6 +183,7 @@ end
 M.run = function(args)
   local rel_path = args.file_path
   local edits = args.edits
+  local force_headless = (args and args.interactive_review == false) or false
 
   if type(rel_path) ~= "string" then
     return "file_path must be a string"
@@ -307,10 +316,24 @@ M.run = function(args)
 
   local updated_lines = working_lines
 
-  -- The rest of the file (UI, writing to disk) is unchanged...
+  -- Update the deferred review accumulator for this file (baseline preserved from first edit)
+  do
+    local entry = deferred_reviews[abs_path]
+    if entry == nil then
+      deferred_reviews[abs_path] = { baseline = vim.deepcopy(orig_lines), latest = vim.deepcopy(updated_lines) }
+    else
+      entry.latest = vim.deepcopy(updated_lines)
+      deferred_reviews[abs_path] = entry
+    end
+  end
+
+  -- Decide whether to show the interactive inline diff or apply headlessly.
   local uis = vim.api.nvim_list_uis()
-  if not uis or #uis == 0 then
-    -- ... headless logic
+  local has_ui = uis and #uis > 0
+
+  -- If no UI is available at all, fall back to headless write-to-disk behaviour.
+  if not has_ui then
+    -- ... headless logic (no UI available)
     local ensure_dir = args.ensure_dir
     if ensure_dir == nil then
       ensure_dir = true
@@ -332,7 +355,7 @@ M.run = function(args)
       summary = string.format("Applied %d replacement(s) to %s (auto-approved, headless)", total_replacements, rel_path)
     else
       summary =
-          string.format("Created %s with %d replacement(s) (auto-approved, headless)", rel_path, total_replacements)
+        string.format("Created %s with %d replacement(s) (auto-approved, headless)", rel_path, total_replacements)
     end
     local diff_text = unified_diff(orig_lines, updated_lines)
     local lsp_diag = require("neoai.ai_tools.lsp_diagnostic")
@@ -367,6 +390,45 @@ M.run = function(args)
       diagnostics,
       string.format("NeoAI-Diff-Hash: %s", diff_hash),
       string.format("NeoAI-Diagnostics-Count: %d", diag_count),
+    }
+    return table.concat(parts, "\n\n")
+  end
+
+  -- UI is available. Respect interactive_review flag as a request to DEFER showing UI,
+  -- but never write to disk. Stage the changes for a later interactive review instead.
+  if force_headless then
+    local diff_text = unified_diff(orig_lines, updated_lines)
+    -- Compute a simple hash of the unified diff for orchestration
+    local function simple_hash(s)
+      s = s or ""
+      local h1, h2 = 0, 0
+      for i = 1, #s do
+        local b = string.byte(s, i)
+        h1 = (h1 + b) % 4294967296
+        h2 = (h2 * 31 + b) % 4294967296
+      end
+      return string.format("%08x%08x_%d", h1, h2, #s)
+    end
+    local diff_hash = simple_hash(diff_text)
+
+    local summary
+    if file_exists then
+      summary =
+        string.format("Staged %d replacement(s) for %s (deferred review; not written)", total_replacements, rel_path)
+    else
+      summary = string.format(
+        "Staged new file %s with %d replacement(s) (deferred review; not written)",
+        rel_path,
+        total_replacements
+      )
+    end
+
+    local parts = {
+      summary,
+      "Pending diff (staged):",
+      utils.make_code_block(diff_text, "diff"),
+      -- Intentionally omit diagnostics count in deferred mode to avoid premature gating
+      string.format("NeoAI-Diff-Hash: %s", diff_hash),
     }
     return table.concat(parts, "\n\n")
   end
@@ -434,6 +496,66 @@ M.run = function(args)
     end
     return msg or ("Failed to open inline diff and could not write file: " .. tostring(ferr))
   end
+end
+--- Open an accumulated, deferred inline diff review for the given file.
+--- Shows a single review comparing the original baseline (before the first edit in the loop)
+--- to the latest content after the AI's iterations.
+---@param file_path string: Relative or absolute path to the file
+---@return boolean, string
+function M.open_deferred_review(file_path)
+  if type(file_path) ~= "string" or file_path == "" then
+    return false, "Invalid file path"
+  end
+  local abs_path = file_path
+  if not abs_path:match("^/") and not abs_path:match("^%a:[/\\]") then
+    abs_path = vim.fn.getcwd() .. "/" .. file_path
+  end
+  local entry = deferred_reviews[abs_path]
+  if not entry or not entry.baseline or not entry.latest then
+    return false, "No pending deferred review for this file"
+  end
+
+  -- If there are no differences, do not open the UI.
+  local function lines_equal(a, b)
+    if #a ~= #b then
+      return false
+    end
+    for i = 1, #a do
+      if a[i] ~= b[i] then
+        return false
+      end
+    end
+    return true
+  end
+  if lines_equal(entry.baseline, entry.latest) then
+    deferred_reviews[abs_path] = nil
+    return false, "No changes to review"
+  end
+
+  local ok, msg = utils.inline_diff.apply(abs_path, entry.baseline, entry.latest)
+  if ok then
+    -- Prepare discard support: allow reverting to baseline if requested
+    active_edit_state = {
+      bufnr = vim.fn.bufadd(abs_path),
+      original_lines = entry.baseline,
+    }
+    -- Clear the accumulator now that the review is open
+    deferred_reviews[abs_path] = nil
+  end
+  return ok, msg
+end
+
+--- Clear any stored deferred review for a file (if present).
+---@param file_path string
+function M.clear_deferred_review(file_path)
+  if type(file_path) ~= "string" or file_path == "" then
+    return
+  end
+  local abs_path = file_path
+  if not abs_path:match("^/") and not abs_path:match("^%a:[/\\]") then
+    abs_path = vim.fn.getcwd() .. "/" .. file_path
+  end
+  deferred_reviews[abs_path] = nil
 end
 
 return M
