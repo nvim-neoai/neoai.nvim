@@ -51,6 +51,9 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
     vim.notify("NeoAI: Sending JSON payload to curl (stream):\n" .. payload, vim.log.levels.DEBUG, { title = "NeoAI" })
   end
 
+  -- Accumulate raw body for verbose error reporting in non-SSE cases
+  local raw_body_chunks = {}
+
   local api_key_header = conf.api_key_header or "Authorization"
   local api_key_format = conf.api_key_format or "Bearer %s"
   local api_key_value = string.format(api_key_format, conf.api_key)
@@ -94,7 +97,7 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
               return
             end
 
-            -- Detect SSE error payloads and surface immediately
+            -- Detect SSE error payloads and surface immediately (include raw chunk for visibility)
             if not error_reported and type(decoded) == "table" then
               local err_msg
               if type(decoded.error) == "table" then
@@ -106,7 +109,15 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
               end
               if err_msg and err_msg ~= "" then
                 error_reported = true
-                on_error("API error: " .. tostring(err_msg))
+                local verbose = "API error (SSE): "
+                  .. tostring(err_msg)
+                  .. "\nFull SSE payload (decoded):\n"
+                  .. vim.inspect(decoded)
+                  .. "\nFull SSE chunk (raw):\n"
+                  .. chunk
+                -- Immediate user-visible error with full details
+                vim.notify(verbose, vim.log.levels.ERROR, { title = "NeoAI" })
+                on_error(verbose)
                 return
               end
             end
@@ -188,6 +199,7 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
             -- Accumulate non-SSE lines; many providers return a single-line JSON error but we guard for multi-line too
             if trimmed ~= "" then
               table.insert(non_sse_buf, trimmed)
+              table.insert(raw_body_chunks, trimmed)
             end
             if not error_reported then
               local aggregated = table.concat(non_sse_buf, "\n")
@@ -209,7 +221,15 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
                     error_reported = true
                     vim.schedule(function()
                       local prefix = http_status and ("HTTP " .. tostring(http_status) .. ": ") or ""
-                      on_error(prefix .. "API error: " .. tostring(err_msg))
+                      local verbose = prefix
+                        .. "API error: "
+                        .. tostring(err_msg)
+                        .. "\nFull response body (decoded):\n"
+                        .. vim.inspect(decoded)
+                        .. "\nFull response body (raw):\n"
+                        .. agg_trim
+                      vim.notify(verbose, vim.log.levels.ERROR, { title = "NeoAI" })
+                      on_error(verbose)
                     end)
                   end
                 end
@@ -227,7 +247,9 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
       if not error_reported then
         error_reported = true
         vim.schedule(function()
-          on_error("curl error: " .. tostring(line))
+          local verbose = "curl error: " .. tostring(line)
+          vim.notify(verbose, vim.log.levels.ERROR, { title = "NeoAI" })
+          on_error(verbose)
         end)
       end
     end,
@@ -243,11 +265,19 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
           else
             -- If curl failed at the transport level
             if exit_code ~= 0 then
-              on_error(exit_code)
+              local verbose = "curl exited with code: " .. tostring(exit_code)
+              vim.notify(verbose, vim.log.levels.ERROR, { title = "NeoAI" })
+              on_error(verbose)
             else
               -- Transport OK but we may still have an HTTP error without a parsed body
               if not error_reported and http_status and http_status >= 400 then
-                on_error("HTTP " .. tostring(http_status) .. " error")
+                local raw_body = table.concat(raw_body_chunks, "\n")
+                local verbose = "HTTP " .. tostring(http_status) .. " error"
+                if raw_body ~= "" then
+                  verbose = verbose .. "\nRaw body (unparsed):\n" .. raw_body
+                end
+                vim.notify(verbose, vim.log.levels.ERROR, { title = "NeoAI" })
+                on_error(verbose)
               end
             end
           end

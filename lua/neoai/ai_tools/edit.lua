@@ -253,11 +253,28 @@ M.run = function(args)
 
     if not start_line then
       -- Since we now assume in-order edits, a failure to find is a critical error.
-      return string.format(
-        "Edit %d: Could not find a matching block for 'old_string' starting from line %d. The AI may have provided edits out of order or the code has changed.",
-        i,
-        search_start_line
-      )
+      local verbose = table.concat({
+        string.format(
+          "Edit %d: Could not find matching block for old_string starting from line %d",
+          i,
+          search_start_line
+        ),
+        string.format("File: %s", rel_path),
+        "Context (first 60 lines from search point):",
+        utils.make_code_block(
+          table.concat(
+            vim.list_slice(working_lines, search_start_line, math.min(#working_lines, search_start_line + 59)),
+            "\n"
+          ),
+          ""
+        ) or "",
+        "old_string:",
+        utils.make_code_block(edit.old_string or "", "") or "",
+        "new_string:",
+        utils.make_code_block(edit.new_string or "", "") or "",
+      }, "\n\n")
+      vim.notify("NeoAI Edit error:\n" .. verbose, vim.log.levels.ERROR, { title = "NeoAI" })
+      return verbose
     end
 
     -- Apply the edit to the working copy of the lines
