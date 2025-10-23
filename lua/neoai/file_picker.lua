@@ -50,15 +50,15 @@ function M.select_file()
             insert_col = line_len
           end
 
-          -- Always insert: space + `filepath` + space
-          local insert_text = " `" .. filepath .. "` "
+          -- Insert: a leading space + `filepath` with NO trailing space
+          local insert_text = " `" .. filepath .. "`"
           vim.api.nvim_buf_set_text(bufnr, row - 1, insert_col, row - 1, insert_col, { insert_text })
 
-          -- Place cursor on the trailing space, then append after it
-          local space_col = insert_col + #insert_text - 1
-          vim.api.nvim_win_set_cursor(0, { row, space_col })
+          -- Place cursor on the closing backtick, then append after it
+          local btick_col = insert_col + #insert_text - 1
+          vim.api.nvim_win_set_cursor(0, { row, btick_col })
 
-          -- Enter Insert mode after the trailing space (reliable for both mid-line and EOL)
+          -- Enter Insert mode after the closing backtick
           local a = vim.api.nvim_replace_termcodes("a", true, false, true)
           vim.api.nvim_feedkeys(a, "n", false)
         end)
