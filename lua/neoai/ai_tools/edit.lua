@@ -440,12 +440,40 @@ M.run = function(args)
       )
     end
 
+    -- Compute diagnostics for the staged content without surfacing UI changes:
+    -- 1) Ensure a buffer exists for the target path.
+    local bufnr = bufnr_from_list or vim.fn.bufadd(abs_path)
+    -- 2) Load and capture current buffer state (to restore later).
+    pcall(vim.fn.bufload, bufnr)
+    local saved_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+    local saved_modified = vim.api.nvim_get_option_value("modified", { buf = bufnr })
+
+    -- 3) Apply staged content to the buffer, await diagnostics publish, then read diagnostics.
+    local diag_count = 0
+    local diagnostics_text = ""
+    local lsp_diag = require("neoai.ai_tools.lsp_diagnostic")
+    local ok_patch = pcall(function()
+      vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, updated_lines)
+    end)
+    if ok_patch then
+      pcall(lsp_diag.await_count, { bufnr = bufnr, timeout_ms = 1500 })
+      diagnostics_text = lsp_diag.run({ bufnr = bufnr, file_path = abs_path, include_code_actions = false })
+      diag_count = #vim.diagnostic.get(bufnr)
+    end
+
+    -- 4) Restore original buffer content and modified flag, so user-visible state is unchanged.
+    pcall(function()
+      vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, saved_lines)
+      vim.api.nvim_set_option_value("modified", saved_modified, { buf = bufnr })
+    end)
+
     local parts = {
       summary,
       "Pending diff (staged):",
       utils.make_code_block(diff_text, "diff"),
-      -- Intentionally omit diagnostics count in deferred mode to avoid premature gating
+      diagnostics_text,
       string.format("NeoAI-Diff-Hash: %s", diff_hash),
+      string.format("NeoAI-Diagnostics-Count: %d", diag_count),
     }
     return table.concat(parts, "\n\n")
   end

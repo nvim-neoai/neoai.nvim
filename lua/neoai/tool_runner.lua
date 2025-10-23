@@ -151,12 +151,9 @@ function M.run_tool_calls(chat_module, tool_schemas)
     end
   end
 
-  -- If we decided to pause for review, or we staged any deferred edits at all, open the deferred diff and gate the loop
-  if
-    (should_gate or (any_deferred and deferred_to_open and deferred_to_open ~= ""))
-    and deferred_to_open
-    and deferred_to_open ~= ""
-  then
+  -- Open the deferred review only when stop conditions are met (diagnostics clean/unchanged/max tries).
+  -- Merely staging edits is not sufficient to gate; we keep iterating to improve before surfacing to the user.
+  if should_gate and deferred_to_open and deferred_to_open ~= "" then
     local opened = false
     local ok_open, edit_mod = pcall(require, "neoai.ai_tools.edit")
     if ok_open and edit_mod and type(edit_mod.open_deferred_review) == "function" then

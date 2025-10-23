@@ -20,6 +20,15 @@ Key components:
 
 The system prompt automatically includes a list of available tools and, if present, the contents of this AGENTS.md.
 
+### Edit + Diagnostics feedback loop (important)
+- Edit tool calls are run in deferred mode (no inline UI shown immediately). The resulting diffs are staged internally.
+- After each edit, the plugin fetches LSP diagnostics for the edited buffer and emits machine-readable markers (diff hash, diagnostics count).
+- The tool runner iterates: it will only surface the staged diff for user review when one of the following stop conditions is met:
+  - diagnostics count is zero (no errors/warnings), or
+  - the produced diff is unchanged from the previous attempt, or
+  - a small iteration cap is reached.
+- This prevents proposing broken diffs with many errors; instead, the assistant uses diagnostics to self-correct before asking the user to review.
+
 ---
 
 ## Dev environment tips
