@@ -1,4 +1,5 @@
 local chat = {}
+---@diagnostic disable: undefined-field, unused-local
 
 -- Ensure that the discard_all_diffs function is accessible
 local ai_tools = require("neoai.ai_tools")
@@ -94,7 +95,7 @@ end
 -- Thinking animation (spinner) helpers
 local thinking_ns = vim.api.nvim_create_namespace("NeoAIThinking")
 -- Use simple ASCII spinner for broad compatibility
-local spinner_frames = { "|", "/", "-", "\\" }
+-- Removed unused spinner_frames to keep diagnostics clean
 
 -- Format a duration in seconds into a compact human-friendly string (e.g., 1m 33s)
 local function fmt_duration(seconds)
@@ -268,6 +269,7 @@ local function start_thinking_animation()
   ensure_thinking_visible()
 
   st.timer = vim.loop.new_timer()
+  ---@diagnostic disable-next-line: undefined-field
   st.timer:start(
     0,
     1000,
