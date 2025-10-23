@@ -97,6 +97,21 @@ local thinking_ns = vim.api.nvim_create_namespace("NeoAIThinking")
 -- Use simple ASCII spinner for broad compatibility
 -- Removed unused spinner_frames to keep diagnostics clean
 
+-- Redraw any windows that are currently showing the chat buffer, without stealing focus
+local function redraw_chat_windows()
+  local bufnr = chat.chat_state and chat.chat_state.buffers and chat.chat_state.buffers.chat or nil
+  if not (bufnr and vim.api.nvim_buf_is_valid(bufnr)) then
+    return
+  end
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == bufnr then
+      pcall(vim.api.nvim_win_call, win, function()
+        vim.cmd("redraw")
+      end)
+    end
+  end
+end
+
 -- Format a duration in seconds into a compact human-friendly string (e.g., 1m 33s)
 local function fmt_duration(seconds)
   seconds = math.max(0, math.floor(seconds or 0))
@@ -267,6 +282,8 @@ local function start_thinking_animation()
 
   -- Auto-reveal the thinking status so it is visible without manual scrolling
   ensure_thinking_visible()
+  -- Ensure the line is actually drawn even when focus remains in the input window
+  redraw_chat_windows()
 
   st.timer = vim.loop.new_timer()
   ---@diagnostic disable-next-line: undefined-field
@@ -293,8 +310,12 @@ local function start_thinking_animation()
         elapsed = os.time() - st.start_time
       end
       local t = " Thinking… " .. fmt_duration(elapsed) .. " "
+
+      -- Be robust to header relocation: recompute the current header row when possible
+      local current_row = find_last_assistant_header_row() or row
+
       if st.extmark_id then
-        pcall(vim.api.nvim_buf_set_extmark, b, thinking_ns, row, 0, {
+        pcall(vim.api.nvim_buf_set_extmark, b, thinking_ns, current_row, 0, {
           id = st.extmark_id,
           virt_lines = {
             { { "", "Comment" } },
@@ -303,6 +324,9 @@ local function start_thinking_animation()
           virt_lines_above = false,
         })
       end
+
+      -- Force a redraw for any windows showing the chat so the timer visibly updates
+      redraw_chat_windows()
     end)
   )
 end
