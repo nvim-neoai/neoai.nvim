@@ -21,10 +21,16 @@ local function normalise_code_block(lines)
   end
 
   local content = table.concat(lines, "\n")
-  content = content:lower():gsub("/%*.-%*/", ""):gsub("<!--.- -->", ""):gsub("%-%-%[%[.-%]%]", "")
-  -- Remove single-line comments while making the content lowercase
+  -- Remove multi-line comments first (JS/TS, HTML, Lua long comments)
+  content = content:gsub("/%*.-%*/", ""):gsub("<!--.- -->", ""):gsub("%-%-%[%[.-%]%]", "")
+  -- Remove JSX curly-wrapped block comments like `{/* ... */}` (with optional surrounding whitespace)
+  -- This prevents leaving stray `{}` behind which would otherwise break normalised comparisons.
+  content = content:gsub("{%s*/%*.-%*/%s*}", "")
+  -- Lowercase after comment stripping to make matching case-insensitive
+  content = content:lower()
+  -- Remove single-line comments
   content = content:gsub("//[^\n]*", ""):gsub("#[^\n]*", ""):gsub("%-%-[^\n]*", "")
-  -- Normalise whitespace (newlines, tabs, multiple spaces) to a single space
+  -- Normalise all whitespace (newlines, tabs, multiple spaces) to a single space
   content = content:gsub("%s+", " ")
   -- Trim leading/trailing whitespace
   return content:gsub("^%s+", ""):gsub("%s+$", "")
