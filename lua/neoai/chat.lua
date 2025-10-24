@@ -656,7 +656,9 @@ function chat.send_to_ai()
     { role = "system", content = system_prompt },
   }
 
-  local session_msgs = storage.get_session_messages(chat.chat_state.current_session.id, 100)
+  -- Fetch a generous recent window to reduce the chance of slicing between
+  -- an assistant tool_calls turn and its tool responses.
+  local session_msgs = storage.get_session_messages(chat.chat_state.current_session.id, 300)
 
   -- Bootstrap pre-flight: force selected tool calls before the first real AI turn.
   do
@@ -665,29 +667,66 @@ function chat.send_to_ai()
     if boot and boot.enabled and is_first_turn then
       require("neoai.bootstrap").run_preflight(chat, boot)
       -- Refresh session messages so the subsequent payload includes the bootstrap turn
-      session_msgs = storage.get_session_messages(chat.chat_state.current_session.id, 100)
+      session_msgs = storage.get_session_messages(chat.chat_state.current_session.id, 300)
     end
   end
 
-  -- Append recent conversation
+  -- Build a valid provider payload by shaping the conversation so that:
+  -- - tool messages only appear immediately after an assistant message with tool_calls
+  -- - orphan tool messages (e.g. due to truncation) are skipped
+  -- - we include only user/assistant/tool messages
   local recent = {}
   for i = #session_msgs, 1, -1 do
     local msg = session_msgs[i]
     if msg.type == MESSAGE_TYPES.USER or msg.type == MESSAGE_TYPES.ASSISTANT or msg.type == MESSAGE_TYPES.TOOL then
       table.insert(recent, 1, msg)
-      if #recent >= 100 then
+      if #recent >= 150 then
         break
       end
     end
   end
 
-  for _, msg in ipairs(recent) do
-    table.insert(messages, {
-      role = msg.type,
-      content = msg.content,
-      tool_calls = msg.tool_calls,
-      tool_call_id = msg.tool_call_id,
-    })
+  -- Shape into API messages with correct tool pairing
+  do
+    local pending_tool_ids = nil ---@type table<string, boolean>|nil
+    for _, msg in ipairs(recent) do
+      if msg.type == MESSAGE_TYPES.ASSISTANT then
+        -- Reset pending ids unless this assistant includes tool calls
+        pending_tool_ids = nil
+        local tool_calls = msg.tool_calls
+        if type(tool_calls) == "table" and #tool_calls > 0 then
+          pending_tool_ids = {}
+          for _, tc in ipairs(tool_calls) do
+            if tc and tc.id then
+              pending_tool_ids[tostring(tc.id)] = true
+            end
+          end
+        end
+        table.insert(messages, {
+          role = "assistant",
+          content = msg.content,
+          tool_calls = tool_calls,
+        })
+      elseif msg.type == MESSAGE_TYPES.TOOL then
+        -- Only include tool messages that respond to a currently pending tool id
+        local tid = msg.tool_call_id and tostring(msg.tool_call_id) or nil
+        if pending_tool_ids and tid and pending_tool_ids[tid] then
+          -- Consume this id (each tool_call should have at most one tool response)
+          pending_tool_ids[tid] = nil
+          table.insert(messages, {
+            role = "tool",
+            content = msg.content,
+            tool_call_id = msg.tool_call_id,
+          })
+        else
+          -- Skip orphan tool messages to satisfy provider constraints
+        end
+      elseif msg.type == MESSAGE_TYPES.USER then
+        -- Any user input breaks a pending tool response chain
+        pending_tool_ids = nil
+        table.insert(messages, { role = "user", content = msg.content })
+      end
+    end
   end
 
   if

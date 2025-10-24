@@ -9,6 +9,11 @@ Note: Update this file whenever you change topics covered here (overview, build/
 ## Project overview
 NeoAI.nvim is a Neovim plugin that provides a powerful AI-enhanced chat interface with streaming responses, multi-session storage, and an extensible tool system (ProjectStructure, Read, Edit, TreeSitterQuery, Grep, LspDiagnostic, LspCodeAction). It coordinates automated file edits with inline diff review and leverages LSP diagnostics for iterative improvements.
 
+Conversation shaping for tools:
+- When sending messages to the API, the chat module now shapes history to respect provider constraints: messages with role 'tool' are only included if they immediately follow an assistant message that includes matching tool_calls, and their tool_call_id must match one of those calls.
+- Orphan tool messages (e.g., when truncating long history) are omitted from the payload to prevent HTTP 400 errors like "messages with role 'tool' must be a response to a preceeding message with 'tool_calls'."
+- A larger recent-window is fetched to minimise slicing across an assistant/tool boundary.
+
 Key components:
 - lua/neoai/chat.lua — Chat UI, message orchestration, tool invocation, response streaming
 - lua/neoai/prompt.lua — Template loading and interpolation for the system prompt
