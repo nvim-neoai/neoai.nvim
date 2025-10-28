@@ -340,7 +340,20 @@ function M.find_block_location(buffer_lines, block_lines_to_find, start_hint, en
     end
   end
 
-  -- If we are here, all attempts failed.
+  -- If we are here, all attempts failed in the forward scan.
+  -- Wrap-around fallback: search from the beginning up to (start_hint - 1)
+  if start_hint and start_hint > 1 then
+    local wrap_end = math.min(#buffer_lines, start_hint - 1)
+    if wrap_end >= 1 then
+      local s, e = M.find_block_location(buffer_lines, block_lines_to_find, 1, wrap_end)
+      if s then
+        vim.notify("[AI] Found block via wrap-around search.", vim.log.levels.DEBUG, { title = "NeoAI" })
+        return s, e
+      end
+    end
+  end
+
+  -- Still not found.
   return nil, nil
 end
 
