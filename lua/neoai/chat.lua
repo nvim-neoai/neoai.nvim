@@ -7,6 +7,17 @@ local prompt = require("neoai.prompt")
 local storage = require("neoai.storage")
 local uv = vim.loop
 
+-- Lazy, idempotent initialisation
+local _setup_done = false
+local function ensure_setup()
+  if _setup_done then
+    return true
+  end
+  local ok = chat.setup()
+  _setup_done = ok and true or false
+  return _setup_done
+end
+
 -- Helper: get the configured "main" model name (if available)
 local function get_main_model_name()
   local ok, cfg = pcall(require, "neoai.config")
@@ -95,7 +106,6 @@ end
 -- Thinking animation (spinner) helpers
 local thinking_ns = vim.api.nvim_create_namespace("NeoAIThinking")
 -- Use simple ASCII spinner for broad compatibility
--- Removed unused spinner_frames to keep diagnostics clean
 
 -- Redraw any windows that are currently showing the chat buffer, without stealing focus
 local function redraw_chat_windows()
@@ -393,12 +403,27 @@ local MESSAGE_TYPES = {
   ERROR = "error",
 }
 
--- Setup function
+-- Setup function (idempotent & non-fatal)
 function chat.setup()
-  ai_tools.setup()
+  if _setup_done then
+    return true
+  end
 
+  -- Safe tools setup
+  pcall(function()
+    ai_tools.setup()
+  end)
+
+  -- Get config safely
+  local ok_cfg, cfg = pcall(require, "neoai.config")
+  if not ok_cfg or not cfg or not cfg.values or not cfg.values.chat then
+    vim.notify("NeoAI: config not initialised; skipping chat setup", vim.log.levels.WARN)
+    return false
+  end
+
+  -- Minimal state
   chat.chat_state = {
-    config = require("neoai.config").values.chat,
+    config = cfg.values.chat,
     windows = {},
     buffers = {},
     current_session = nil,
@@ -412,18 +437,52 @@ function chat.setup()
     _iter_map = {}, -- Track per-file iteration state for edit+diagnostic loop
   }
 
-  -- Initialise storage backend
-  local success = storage.init(chat.chat_state.config)
-  assert(success, "NeoAI: Failed to initialise storage")
-
-  -- Load or create session
-  chat.chat_state.current_session = storage.get_active_session()
-  if not chat.chat_state.current_session then
-    chat.new_session()
+  -- Initialise storage backend (guarded, with dir creation and error surfacing)
+  local db_path = (chat.chat_state.config and chat.chat_state.config.database_path) or nil
+  if not db_path or db_path == "" then
+    vim.notify("NeoAI: chat.database_path is not set", vim.log.levels.ERROR)
+    return false
+  end
+  -- Ensure parent directory exists
+  local dir = vim.fn.fnamemodify(db_path, ":h")
+  if dir and dir ~= "" then
+    pcall(vim.fn.mkdir, dir, "p")
   end
 
-  -- Load sessions for UI
-  chat.chat_state.sessions = storage.get_all_sessions()
+  -- Init storage
+  local ok_store, success, err = pcall(storage.init, chat.chat_state.config)
+  if not ok_store or not success then
+    local msg = "NeoAI: Failed to initialise storage"
+    if err then
+      msg = msg .. (": " .. tostring(err))
+    end
+    -- Add path to help you diagnose quickly
+    msg = msg .. " (path: " .. db_path .. ")"
+    vim.notify(msg, vim.log.levels.ERROR)
+    return false
+  end
+
+  -- Load or create session (guarded)
+  local ok_active, active = pcall(storage.get_active_session)
+  if not ok_active or not active then
+    local ok_new = pcall(chat.new_session)
+    if not ok_new then
+      vim.notify("NeoAI: Failed to create new session", vim.log.levels.ERROR)
+      return false
+    end
+    active = storage.get_active_session()
+    if not active then
+      vim.notify("NeoAI: Failed to load active session", vim.log.levels.ERROR)
+      return false
+    end
+  end
+  chat.chat_state.current_session = active
+
+  local ok_all, sessions = pcall(storage.get_all_sessions)
+  chat.chat_state.sessions = ok_all and sessions or {}
+
+  _setup_done = true
+  return true
 end
 
 -- Scroll helper
@@ -437,9 +496,9 @@ local function scroll_to_bottom(bufnr)
   end
 end
 
--- Update chat display
+-- Update chat display (robust)
 local function update_chat_display()
-  if not chat.chat_state.is_open or not chat.chat_state.current_session then
+  if not (chat.chat_state and chat.chat_state.is_open and chat.chat_state.current_session) then
     return
   end
   local bufnr = chat.chat_state.buffers and chat.chat_state.buffers.chat or nil
@@ -449,8 +508,12 @@ local function update_chat_display()
 
   local lines = {}
   local sess = chat.chat_state.current_session
-  assert(sess, "NeoAI: Failed to initialise session")
-  local messages = storage.get_session_messages(sess.id)
+  if not sess then
+    return
+  end
+
+  local ok_msgs, messages = pcall(storage.get_session_messages, sess.id)
+  messages = ok_msgs and messages or {}
 
   table.insert(lines, " **NeoAI Chat** ")
   table.insert(lines, " *Session: " .. (sess.title or "Untitled") .. "* ")
@@ -520,9 +583,9 @@ function chat.add_message(type, content, metadata, tool_call_id, tool_calls)
   metadata = metadata or {}
   metadata.timestamp = metadata.timestamp or os.date("%Y-%m-%d %H:%M:%S")
 
-  local msg_id =
-    storage.add_message(chat.chat_state.current_session.id, type, content, metadata, tool_call_id, tool_calls)
-  if not msg_id then
+  local ok_add, msg_id =
+    pcall(storage.add_message, chat.chat_state.current_session.id, type, content, metadata, tool_call_id, tool_calls)
+  if not ok_add or not msg_id then
     vim.notify("Failed to save message to storage", vim.log.levels.ERROR)
   end
 
@@ -531,21 +594,35 @@ function chat.add_message(type, content, metadata, tool_call_id, tool_calls)
   end
 end
 
--- New session
+-- New session (non-fatal)
 function chat.new_session(title)
   title = title or ("Session " .. os.date("%Y-%m-%d %H:%M:%S"))
-  local session_id = storage.create_session(title, {})
-  assert(session_id, "NeoAI: Failed to create new session")
+  local ok_create, session_id = pcall(storage.create_session, title, {})
+  if not ok_create or not session_id then
+    vim.notify("NeoAI: Failed to create new session", vim.log.levels.ERROR)
+    return false
+  end
 
-  chat.chat_state.current_session = storage.get_active_session()
+  local active = storage.get_active_session()
+  if not active then
+    vim.notify("NeoAI: Failed to load active session after creation", vim.log.levels.ERROR)
+    return false
+  end
+
+  chat.chat_state.current_session = active
   chat.chat_state.sessions = storage.get_all_sessions()
 
   chat.add_message(MESSAGE_TYPES.SYSTEM, "NeoAI Chat Session Started", { session_id = session_id })
   vim.notify("Created new session: " .. title, vim.log.levels.INFO)
+  return true
 end
 
 -- Open/close/toggle
 function chat.open()
+  if not ensure_setup() then
+    vim.notify("NeoAI: Chat initialisation failed; check your config and storage", vim.log.levels.ERROR)
+    return
+  end
   local ui = require("neoai.ui")
   local keymaps = require("neoai.keymaps")
   ui.open()
@@ -563,7 +640,7 @@ function chat.close()
 end
 
 function chat.toggle()
-  if chat.chat_state.is_open then
+  if chat.chat_state and chat.chat_state.is_open then
     chat.close()
   else
     chat.open()
@@ -572,9 +649,12 @@ end
 
 -- Send message
 function chat.send_message()
+  if not chat.chat_state or not chat.chat_state.buffers or not chat.chat_state.buffers.input then
+    vim.notify("NeoAI: Chat is not initialised", vim.log.levels.WARN)
+    return
+  end
+
   if chat.chat_state.streaming_active and chat.chat_state.user_feedback then
-    -- Ensure we do not open any extra confirmation prompts here.
-    -- Inline diff UI (utils/inline_diff.lua) is the single source of truth for review/approval.
     vim.notify("Pending diffs handled. Awaiting inline diff review.", vim.log.levels.INFO)
     return
   end
@@ -1180,7 +1260,6 @@ end
 
 --- Open chat (if not open) and clear the current session so the user sees a fresh chat
 function chat.open_and_clear()
-  -- Always attempt to open (ui.open is idempotent and also repairs stale state)
   chat.open()
   return chat.clear_session()
 end
