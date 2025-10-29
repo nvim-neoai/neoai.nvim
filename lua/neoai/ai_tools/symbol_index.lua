@@ -117,7 +117,7 @@ local function node_text(node, bufnr)
   if not ok then
     return nil
   end
-  if node == nil or not node.range then
+  if node == nil then
     return nil
   end
   local ok2, text = pcall(ts.get_node_text, node, bufnr)
@@ -130,7 +130,7 @@ local function node_text(node, bufnr)
 end
 
 local function make_range(node)
-  if not node or not node.range then
+  if not node then
     return nil
   end
   local sr, sc, er, ec = node:range()
@@ -595,7 +595,9 @@ local function extract_symbols_for_file(file_path, args)
           elseif cap["class"] and cap["name"] then
             push("class", cap["name"], nil, cap["class"])
           end
-          if #symbols >= max_per_file then break end
+          if #symbols >= max_per_file then
+            break
+          end
         end
         used_any = used_any or #symbols > 0
       end
@@ -605,15 +607,21 @@ local function extract_symbols_for_file(file_path, args)
     if #symbols < max_per_file then
       local function get_query_for_group(lang2, group)
         local ok, ts = pcall(require, "vim.treesitter")
-        if not ok then return nil end
+        if not ok then
+          return nil
+        end
         if ts.query and ts.query.get then
           local okq, q = pcall(ts.query.get, lang2, group)
-          if okq then return q end
+          if okq then
+            return q
+          end
         end
         local okrq, ts_query = pcall(require, "vim.treesitter.query")
         if okrq and ts_query and ts_query.get_query then
           local okq, q = pcall(ts_query.get_query, lang2, group)
-          if okq then return q end
+          if okq then
+            return q
+          end
         end
         return nil
       end
@@ -623,7 +631,9 @@ local function extract_symbols_for_file(file_path, args)
         local function find_name_node(def_node)
           if def_node and def_node.child_by_field_name then
             local nn = def_node:child_by_field_name("name")
-            if nn then return nn end
+            if nn then
+              return nn
+            end
           end
           local wanted = {
             identifier = true,
@@ -632,12 +642,18 @@ local function extract_symbols_for_file(file_path, args)
             property_identifier = true,
           }
           local function walk(n, depth)
-            if not n or depth > 3 then return nil end
-            if wanted[n:type()] then return n end
+            if not n or depth > 3 then
+              return nil
+            end
+            if wanted[n:type()] then
+              return n
+            end
             local count = n:named_child_count() or 0
             for i = 0, count - 1 do
               local found = walk(n:named_child(i), depth + 1)
-              if found then return found end
+              if found then
+                return found
+              end
             end
             return nil
           end
@@ -651,18 +667,28 @@ local function extract_symbols_for_file(file_path, args)
             for id, node in pairs(match) do
               local cname = tsq_to.captures[id] or ""
               local kind
-              if cname:find("function") then kind = "function" end
-              if not kind and cname:find("method") then kind = "method" end
-              if not kind and cname:find("class") then kind = "class" end
+              if cname:find("function") then
+                kind = "function"
+              end
+              if not kind and cname:find("method") then
+                kind = "method"
+              end
+              if not kind and cname:find("class") then
+                kind = "class"
+              end
               if kind then
                 local name_node = find_name_node(node)
                 if name_node then
                   push(kind, name_node, nil, node)
                 end
               end
-              if #symbols >= max_per_file then break end
+              if #symbols >= max_per_file then
+                break
+              end
             end
-            if #symbols >= max_per_file then break end
+            if #symbols >= max_per_file then
+              break
+            end
           end
           used_any = used_any or #symbols > 0
         end
@@ -673,15 +699,21 @@ local function extract_symbols_for_file(file_path, args)
     if #symbols < max_per_file then
       local function get_query_for_group(lang2, group)
         local ok, ts = pcall(require, "vim.treesitter")
-        if not ok then return nil end
+        if not ok then
+          return nil
+        end
         if ts.query and ts.query.get then
           local okq, q = pcall(ts.query.get, lang2, group)
-          if okq then return q end
+          if okq then
+            return q
+          end
         end
         local okrq, ts_query = pcall(require, "vim.treesitter.query")
         if okrq and ts_query and ts_query.get_query then
           local okq, q = pcall(ts_query.get_query, lang2, group)
-          if okq then return q end
+          if okq then
+            return q
+          end
         end
         return nil
       end
@@ -702,7 +734,9 @@ local function extract_symbols_for_file(file_path, args)
           }
           local steps = 0
           while n and steps < 6 do
-            if want[n:type()] then return n end
+            if want[n:type()] then
+              return n
+            end
             n = n:parent()
             steps = steps + 1
           end
@@ -716,17 +750,29 @@ local function extract_symbols_for_file(file_path, args)
             for id, node in pairs(match) do
               local cname = tsq_loc.captures[id] or ""
               local kind
-              if cname:find("definition%.function") then kind = "function" end
-              if not kind and cname:find("definition%.method") then kind = "method" end
-              if not kind and (cname:find("definition%.class") or cname:find("definition%.interface")) then kind = "class" end
-              if not kind and cname:find("definition%.constructor") then kind = "method" end
+              if cname:find("definition%.function") then
+                kind = "function"
+              end
+              if not kind and cname:find("definition%.method") then
+                kind = "method"
+              end
+              if not kind and (cname:find("definition%.class") or cname:find("definition%.interface")) then
+                kind = "class"
+              end
+              if not kind and cname:find("definition%.constructor") then
+                kind = "method"
+              end
               if kind then
                 local def = ascend_to_container(node) or node
                 push(kind, node, nil, def)
               end
-              if #symbols >= max_per_file then break end
+              if #symbols >= max_per_file then
+                break
+              end
             end
-            if #symbols >= max_per_file then break end
+            if #symbols >= max_per_file then
+              break
+            end
           end
           used_any = used_any or #symbols > 0
         end
@@ -753,12 +799,12 @@ local function extract_symbols_for_file(file_path, args)
             elseif cap["class"] and cap["name"] then
               push("class", cap["name"], nil, cap["class"])
             end
-            if #symbols >= max_per_file then break end
+            if #symbols >= max_per_file then
+              break
+            end
           end
         end
       end
-    end
-  end
     end
   end
 
@@ -833,22 +879,15 @@ M.run = function(args)
     if fcount >= max_files then
       break
     end
-    for _, f in ipairs(files) do
-      if fcount >= max_files then break end
-      local res = extract_symbols_for_file(f, args)
-      if res and type(res) == "table" then
-        local lang_ok = true
-        if next(include_langs) then
-          lang_ok = res.language and include_langs[res.language] or false
-        end
-        if lang_ok then
-          table.insert(results, res)
-          fcount = fcount + 1
-          if type(res.symbols) == "table" then scount = scount + #res.symbols end
-        end
+    local res = extract_symbols_for_file(f, args)
+    if res and type(res) == "table" then
+      local lang_ok = true
+      if next(include_langs) then
+        lang_ok = res.language and include_langs[res.language] or false
       end
-    end
-
+      if lang_ok then
+        table.insert(results, res)
+        fcount = fcount + 1
         if type(res.symbols) == "table" then
           scount = scount + #res.symbols
         end
@@ -864,8 +903,8 @@ M.run = function(args)
   else
     -- Fallback plain text
     local lines = { "SymbolIndex results:" }
-    for _, f in ipairs(results) do
-      table.insert(lines, string.format("- %s (%s): %d symbols", f.file, f.language or "?", #(f.symbols or {})))
+    for _, rf in ipairs(results) do
+      table.insert(lines, string.format("- %s (%s): %d symbols", rf.file, rf.language or "?", #(rf.symbols or {})))
     end
     content = utils.make_code_block(table.concat(lines, "\n"), "txt")
   end
