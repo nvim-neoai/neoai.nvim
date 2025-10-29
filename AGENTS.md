@@ -27,10 +27,12 @@ The system prompt automatically includes a list of available tools and, if prese
 
 ### Edit + Diagnostics feedback loop (important)
 - Edit tool calls are run in deferred mode (no inline UI shown immediately). The resulting diffs are staged internally and the assistant pauses immediately for review. Edits are applied sequentially with a forward scan from the previous match position; if not found ahead, a wrap-around search is attempted up to the previous position.
+- Idempotent edits: if an edit's old_string cannot be found but its new_string is already present, the edit is skipped and counted as "already applied" rather than failing the run. A summary of applied vs skipped edits is included in the response.
 - After each edit, the plugin fetches LSP diagnostics for the edited buffer and emits machine-readable markers (diff hash, diagnostics count).
 - The tool runner opens an inline diff review as soon as there are staged changes. The assistant does not continue until the review is closed. If the UI cannot open (e.g., headless), the assistant pauses and informs the user.
 - Previously the runner waited for certain stop conditions before surfacing a review; this has been changed to avoid proceeding while changes are staged.
 - This ensures we never “continue with changes staged”.
+
 
 ---
 
@@ -91,4 +93,5 @@ The system prompt automatically includes a list of available tools and, if prese
 - This file is auto-included into the system prompt at runtime.
 - If you change any of the topics addressed here (overview, commands, code style, testing, security, PR process), update this file as part of the same change.
 - Do not bloat this file; include information that materially improves the agent’s effectiveness working on this repository.
+
 

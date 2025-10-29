@@ -7,8 +7,8 @@
 
 - Provide the `file_path` and an array of `edits`.
 - Parameters for each edit operation are as follows:
-  - `old_string`: The text to replace. Matching is robust to case and minor whitespace differences and uses multiple strategies (exact, trimmed, anchors, shrinking window, Tree-sitter when available, and normalised text). Provide a distinctive, contiguous block from the file. Keep edits in the order they appear top-to-bottom in the file.
-  - `new_string`: The replacement text.
+  - `old_string`: The text to replace. Matching is robust to case and minor whitespace differences and uses multiple strategies (exact, trimmed, anchors, shrinking window, cross-line whitespace-collapsed substring, Tree-sitter when available, and normalised text). Provide a distinctive, contiguous block from the file. Keep edits in the order they appear top-to-bottom in the file.
+  - `new_string`: The replacement text. If `old_string` cannot be found but `new_string` is already present in the file, the edit is treated as already applied and is skipped without error (idempotent behaviour).
 
 ## General File Handling
 
@@ -23,7 +23,7 @@ The tool will display an inline diff (UI) or write the file directly (headless).
 - Batch multiple text replacements in one call, ensuring atomic application where none are written unless all match (utilising whitespace insensitivity for robust edits).
 - Whitespace-insensitive matching fallback for robust edits (e.g. tolerant to indentation or line-ending differences).
 - Uses in-memory buffer content when available (unsaved changes are respected).
-- Ensures edits are applied atomically: nothing is written unless all edits match.
+- Ensures edits are applied atomically: nothing is written unless all edits match. Edits that are already applied are skipped and do not block the rest.
 - Search behaviour: edits are applied sequentially with a forward scan from the previous match location. If a match is not found ahead, the tool performs a wrap-around search from the top of the file up to the previous location.
 - In UI mode, this tool shows an inline diff suggestion directly in the file. You can accept or reject hunks interactively:
   - <ct>: accept theirs (apply suggested change)

@@ -238,6 +238,7 @@ M.run = function(args)
   local working_lines = vim.deepcopy(orig_lines)
   local search_start_line = 1 -- Our "bookmark" for where to start the next search
   local total_replacements = 0
+  local skipped_already_applied = 0
 
   for i, edit in ipairs(edits) do
     local old_lines = split_lines(normalise_eol(edit.old_string))
@@ -252,82 +253,96 @@ M.run = function(args)
     end
 
     if not start_line then
-      -- Since we now assume in-order edits, a failure to find is a critical error.
-      local verbose = table.concat({
-        string.format(
-          "Edit %d: Could not find matching block for old_string starting from line %d",
-          i,
-          search_start_line
-        ),
-        string.format("File: %s", rel_path),
-        "Context (first 60 lines from search point):",
-        utils.make_code_block(
-          table.concat(
-            vim.list_slice(working_lines, search_start_line, math.min(#working_lines, search_start_line + 59)),
-            "\n"
+      -- Idempotency: if the new_string already exists, treat this as already-applied and skip.
+      local candidate_new_lines = split_lines(normalise_eol(edit.new_string))
+      strip_cr(candidate_new_lines)
+      local s2, e2 = finder.find_block_location(working_lines, candidate_new_lines, search_start_line, nil)
+      if s2 then
+        skipped_already_applied = skipped_already_applied + 1
+        -- Advance the bookmark past the already-present block to keep ordering semantics
+        search_start_line = e2 + 1
+        -- Proceed to next edit without error or changes
+      else
+        -- Since we now assume in-order edits, a failure to find is a critical error.
+        local verbose = table.concat({
+          string.format(
+            "Edit %d: Could not find matching block for old_string starting from line %d",
+            i,
+            search_start_line
           ),
-          ""
-        ) or "",
-        "old_string:",
-        utils.make_code_block(edit.old_string or "", "") or "",
-        "new_string:",
-        utils.make_code_block(edit.new_string or "", "") or "",
-      }, "\n\n")
-      vim.notify("NeoAI Edit error:\n" .. verbose, vim.log.levels.ERROR, { title = "NeoAI" })
-      return verbose
-    end
+          string.format("File: %s", rel_path),
+          "Context (first 60 lines from search point):",
+          utils.make_code_block(
+            table.concat(
+              vim.list_slice(working_lines, search_start_line, math.min(#working_lines, search_start_line + 59)),
+              "\n"
+            ),
+            ""
+          ) or "",
+          "old_string:",
+          utils.make_code_block(edit.old_string or "", "") or "",
+          "new_string:",
+          utils.make_code_block(edit.new_string or "", "") or "",
+        }, "\n\n")
+        vim.notify("NeoAI Edit error:\n" .. verbose, vim.log.levels.ERROR, { title = "NeoAI" })
+        return verbose
+      end
+    else
+      -- Apply the edit to the working copy of the lines
+      local new_lines = split_lines(normalise_eol(edit.new_string))
+      strip_cr(new_lines)
 
-    -- Apply the edit to the working copy of the lines
-    local new_lines = split_lines(normalise_eol(edit.new_string))
-    strip_cr(new_lines)
-
-    -- Determine the base indent from the smallest-indented non-empty line in the matched range.
-    local base_indent = ""
-    if start_line and end_line and start_line >= 1 and end_line >= start_line then
-      local _, idx = range_min_indent_line(working_lines, start_line, end_line)
-      if idx and working_lines[idx] then
-        base_indent = leading_ws(working_lines[idx])
+      -- Determine the base indent from the smallest-indented non-empty line in the matched range.
+      local base_indent = ""
+      if start_line and end_line and start_line >= 1 and end_line >= start_line then
+        local _, idx = range_min_indent_line(working_lines, start_line, end_line)
+        if idx and working_lines[idx] then
+          base_indent = leading_ws(working_lines[idx])
+        else
+          base_indent = leading_ws(working_lines[start_line] or "")
+        end
       else
         base_indent = leading_ws(working_lines[start_line] or "")
       end
-    else
-      base_indent = leading_ws(working_lines[start_line] or "")
-    end
 
-    -- Dedent the incoming new_lines by their minimal common indentation,
-    -- then re-indent them with the base indent derived from the context.
-    local adjusted_new_lines = {}
-    local dedented = dedent(new_lines)
-    for k, line in ipairs(dedented) do
-      if line:match("%S") then
-        adjusted_new_lines[k] = base_indent .. line
-      else
-        adjusted_new_lines[k] = ""
+      -- Dedent the incoming new_lines by their minimal common indentation,
+      -- then re-indent them with the base indent derived from the context.
+      local adjusted_new_lines = {}
+      local dedented = dedent(new_lines)
+      for k, line in ipairs(dedented) do
+        if line:match("%S") then
+          adjusted_new_lines[k] = base_indent .. line
+        else
+          adjusted_new_lines[k] = ""
+        end
       end
+
+      -- Perform the replacement on the working_lines table
+      local num_to_remove = end_line - start_line + 1
+      if num_to_remove < 0 then
+        num_to_remove = 0
+      end
+
+      for _ = 1, num_to_remove do
+        table.remove(working_lines, start_line)
+      end
+
+      for j, line in ipairs(adjusted_new_lines) do
+        table.insert(working_lines, start_line - 1 + j, line)
+      end
+
+      total_replacements = total_replacements + 1
+
+      -- CRITICAL: Update the bookmark for the next search.
+      -- It's the line where the edit started plus the number of lines we added.
+      search_start_line = start_line + #adjusted_new_lines
     end
-
-    -- Perform the replacement on the working_lines table
-    local num_to_remove = end_line - start_line + 1
-    if num_to_remove < 0 then
-      num_to_remove = 0
-    end
-
-    for _ = 1, num_to_remove do
-      table.remove(working_lines, start_line)
-    end
-
-    for j, line in ipairs(adjusted_new_lines) do
-      table.insert(working_lines, start_line - 1 + j, line)
-    end
-
-    total_replacements = total_replacements + 1
-
-    -- CRITICAL: Update the bookmark for the next search.
-    -- It's the line where the edit started plus the number of lines we added.
-    search_start_line = start_line + #adjusted_new_lines
   end
 
   if total_replacements == 0 then
+    if skipped_already_applied > 0 then
+      return string.format("No changes needed in %s (%d edit(s) already applied).", rel_path, skipped_already_applied)
+    end
     return string.format("No replacements made in %s.", rel_path)
   end
 
@@ -368,11 +383,24 @@ M.run = function(args)
     f:close()
 
     local summary
+    local skipped_note = ""
+    if skipped_already_applied > 0 then
+      skipped_note = string.format("; %d skipped as already applied", skipped_already_applied)
+    end
     if file_exists then
-      summary = string.format("Applied %d replacement(s) to %s (auto-approved, headless)", total_replacements, rel_path)
+      summary = string.format(
+        "Applied %d replacement(s) to %s (auto-approved, headless)%s",
+        total_replacements,
+        rel_path,
+        skipped_note
+      )
     else
-      summary =
-        string.format("Created %s with %d replacement(s) (auto-approved, headless)", rel_path, total_replacements)
+      summary = string.format(
+        "Created %s with %d replacement(s) (auto-approved, headless)%s",
+        rel_path,
+        total_replacements,
+        skipped_note
+      )
     end
     local diff_text = unified_diff(orig_lines, updated_lines)
     local lsp_diag = require("neoai.ai_tools.lsp_diagnostic")
@@ -429,14 +457,23 @@ M.run = function(args)
     local diff_hash = simple_hash(diff_text)
 
     local summary
+    local skipped_note = ""
+    if skipped_already_applied > 0 then
+      skipped_note = string.format("; %d skipped as already applied", skipped_already_applied)
+    end
     if file_exists then
-      summary =
-        string.format("Staged %d replacement(s) for %s (deferred review; not written)", total_replacements, rel_path)
+      summary = string.format(
+        "Staged %d replacement(s) for %s (deferred review; not written)%s",
+        total_replacements,
+        rel_path,
+        skipped_note
+      )
     else
       summary = string.format(
-        "Staged new file %s with %d replacement(s) (deferred review; not written)",
+        "Staged new file %s with %d replacement(s) (deferred review; not written)%s",
         rel_path,
-        total_replacements
+        total_replacements,
+        skipped_note
       )
     end
 
@@ -515,6 +552,11 @@ M.run = function(args)
 
     local parts = {
       msg,
+      string.format(
+        "Edits summary: applied %d, skipped %d (already applied)",
+        total_replacements,
+        skipped_already_applied
+      ),
       "Applied diff:",
       utils.make_code_block(diff_text, "diff"),
       diagnostics,
