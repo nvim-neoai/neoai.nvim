@@ -194,9 +194,11 @@ M.run = function(args)
       table.sort(keys)
     end
     local msg = string.format(
-      "Edit tool error: 'file_path' must be a string (got %s). Args keys: [%s]",
+      "Edit tool error: 'file_path' must be a string (got %s), value: %s. Args keys: [%s]. Args: [%s]",
       type(rel_path),
-      table.concat(keys, ", ")
+      rel_path,
+      table.concat(keys, ", "),
+      table.concat(vals, ", ")
     )
     vim.notify(msg, vim.log.levels.ERROR, { title = "NeoAI" })
     return msg

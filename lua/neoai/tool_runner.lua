@@ -45,6 +45,7 @@ function M.run_tool_calls(chat_module, tool_schemas)
     call_title = "**Tool call:** " .. table.concat(call_names, ", ")
   end
   chat_module.add_message(MT.ASSISTANT, call_title, {}, nil, tool_schemas)
+  pcall(vim.notify, "NeoAI tool_runner: executing tool calls: " .. table.concat(call_names, ", "), vim.log.levels.DEBUG)
   local completed = 0
 
   -- Track whether we should pause for user review after processing tool calls
@@ -76,6 +77,9 @@ function M.run_tool_calls(chat_module, tool_schemas)
           tool_found = true
           -- Force Edit calls to run headlessly and defer user review
           if fn.name == "Edit" then
+            -- Print the raw JSON arguments for the Edit tool call to :messages
+            vim.print("[NeoAI] Edit tool call JSON:", fn.arguments)
+
             args = args or {}
             args.interactive_review = false
             any_deferred = true
