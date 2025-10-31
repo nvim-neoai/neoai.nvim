@@ -24,17 +24,13 @@ Key components:
 - lua/neoai/commands.lua — User commands
 
 The system prompt automatically includes a list of available tools and, if present, the contents of this AGENTS.md.
-- Edit tool calls are run in deferred mode (no inline UI shown immediately). The resulting diffs are staged internally and the assistant pauses for review once stop conditions are met (unchanged diff, clean diagnostics, or max attempts). Edits are applied order‑invariantly: matches are collected across the file, overlaps resolved left‑to‑right, and a few passes attempted when needed.
+- Edit tool calls are run in deferred mode (no inline UI shown immediately). The resulting diffs are staged internally and the assistant pauses immediately for review. Edits are applied order‑invariantly: matches are collected across the file, overlaps resolved left‑to‑right, and a few passes attempted when needed.
 
 - Idempotent edits: if an edit's old_string cannot be found but its new_string is already present, the edit is skipped and counted as "already applied" rather than failing the run. A summary of applied vs skipped edits is included in the response.
-- After each edit, the plugin fetches LSP diagnostics for the edited buffer and emits machine-readable markers (diff hash, diagnostics count). When some edits could not be applied, the tool now adds a machine-readable flag: `NeoAI-Unapplied-Edits: N`.
-- Inline diff review outcome is reported back to the assistant via a SYSTEM message with machine‑readable markers, so the model knows what actually happened:
-  - outcome: applied_all | applied_some | applied_none
-  - action: written | resolved | cancelled | closed
-  - NeoAI-Diff-Hash: <hash>
-  - NeoAI-Diagnostics-Count: <n>
-- If the UI cannot open (e.g., headless), the tool applies changes directly and returns the diff markers in the tool response.
-- The assistant will not continue “as if applied” after a user cancellation; the outcome is surfaced immediately and becomes part of the shaped history.
+- After each edit, the plugin fetches LSP diagnostics for the edited buffer and emits machine-readable markers (diff hash, diagnostics count).
+- The tool runner opens an inline diff review as soon as there are staged changes. The assistant does not continue until the review is closed. If the UI cannot open (e.g., headless), the assistant pauses and informs the user.
+- Previously the runner waited for certain stop conditions before surfacing a review; this has been changed to avoid proceeding while changes are staged.
+- This ensures we never “continue with changes staged”.
 
 ### Error surfacing
 - Tool argument JSON errors are surfaced in the chat and via `vim.notify`. When a tool call provides invalid JSON for arguments, the runner reports the decode error with a byte length and a safe preview and skips executing that tool call.
@@ -100,7 +96,6 @@ The system prompt automatically includes a list of available tools and, if prese
 - This file is auto-included into the system prompt at runtime.
 - If you change any of the topics addressed here (overview, commands, code style, testing, security, PR process), update this file as part of the same change.
 - Do not bloat this file; include information that materially improves the agent’s effectiveness working on this repository.
-
 
 
 

@@ -122,7 +122,6 @@ function M.apply(abs_path, old_lines, new_lines, opts)
     bufnr = -1,
     augroup = -1,
     original_lines = {},
-    target_lines = {}, -- preserve target (new) lines to detect full/partial application on close
     blocks = {},
     keys = vim.tbl_deep_extend("force", DEFAULT_KEYS, (opts or {}).keys or {}),
     event_fired = false,
@@ -134,9 +133,7 @@ function M.apply(abs_path, old_lines, new_lines, opts)
 
   function State:build_blocks()
     local patch = compute_patch(old_lines, new_lines)
-    self.target_lines = vim.deepcopy(new_lines)
     local blocks = {}
-
     for _, h in ipairs(patch) do
       local a_s, a_c, b_s, b_c = h[1], h[2], h[3], h[4]
       table.insert(blocks, {
@@ -346,11 +343,6 @@ function M.apply(abs_path, old_lines, new_lines, opts)
             end)
             diag_count = #vim.diagnostic.get(self.bufnr)
           end
-          -- Classify outcome against original/target
-          local final_lines_cmp = final_lines or {}
-          local fully_applied = lines_equal(final_lines_cmp, self.target_lines or {})
-          local none_applied = lines_equal(final_lines_cmp, self.original_lines or {})
-          local outcome = none_applied and "applied_none" or (fully_applied and "applied_all" or "applied_some")
           local payload = {
             action = ((will_write and wrote_ok) and "written" or "resolved"),
             path = abs_path,
@@ -358,11 +350,7 @@ function M.apply(abs_path, old_lines, new_lines, opts)
             diff = diff_text,
             diff_hash = simple_hash(diff_text),
             diagnostics_count = diag_count,
-            outcome = outcome,
-            fully_applied = fully_applied,
-            none_applied = none_applied,
           }
-
           -- Mark review as inactive now that it is closed
           vim.g.neoai_inline_diff_active = false
           vim.schedule(function()
@@ -433,11 +421,7 @@ function M.apply(abs_path, old_lines, new_lines, opts)
         diff = diff_text,
         diff_hash = simple_hash(diff_text),
         diagnostics_count = diag_count,
-        outcome = "applied_none",
-        fully_applied = false,
-        none_applied = true,
       }
-
       -- Mark review as inactive
       vim.g.neoai_inline_diff_active = false
       vim.schedule(function()
@@ -508,10 +492,6 @@ function M.apply(abs_path, old_lines, new_lines, opts)
             end)
             diag_count = #vim.diagnostic.get(State.bufnr)
           end
-          local final_lines_cmp = final_lines or {}
-          local fully_applied = lines_equal(final_lines_cmp, State.target_lines or {})
-          local none_applied = lines_equal(final_lines_cmp, State.original_lines or {})
-          local outcome = none_applied and "applied_none" or (fully_applied and "applied_all" or "applied_some")
           local payload = {
             action = "written",
             path = abs_path,
@@ -519,11 +499,7 @@ function M.apply(abs_path, old_lines, new_lines, opts)
             diff = diff_text,
             diff_hash = simple_hash(diff_text),
             diagnostics_count = diag_count,
-            outcome = outcome,
-            fully_applied = fully_applied,
-            none_applied = none_applied,
           }
-
           -- Mark review as inactive
           vim.g.neoai_inline_diff_active = false
           vim.schedule(function()
@@ -562,10 +538,6 @@ function M.apply(abs_path, old_lines, new_lines, opts)
             end)
             diag_count = #vim.diagnostic.get(State.bufnr)
           end
-          local final_lines_cmp = final_lines or {}
-          local fully_applied = lines_equal(final_lines_cmp, State.target_lines or {})
-          local none_applied = lines_equal(final_lines_cmp, State.original_lines or {})
-          local outcome = none_applied and "applied_none" or (fully_applied and "applied_all" or "applied_some")
           local payload = {
             action = "closed",
             path = abs_path,
@@ -573,11 +545,7 @@ function M.apply(abs_path, old_lines, new_lines, opts)
             diff = diff_text,
             diff_hash = simple_hash(diff_text),
             diagnostics_count = diag_count,
-            outcome = outcome,
-            fully_applied = fully_applied,
-            none_applied = none_applied,
           }
-
           -- Mark review as inactive
           vim.g.neoai_inline_diff_active = false
           vim.schedule(function()

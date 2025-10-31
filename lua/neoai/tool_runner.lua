@@ -105,22 +105,11 @@ function M.run_tool_calls(chat_module, tool_schemas)
           if content == "" then
             content = "No response"
           end
+          chat_module.add_message(MT.TOOL, tostring(content), meta, schema.id)
 
-          -- Special handling for Edit: if we staged a deferred review (UI path),
-          -- do NOT emit the tool response yet. We will emit the final outcome as the tool
-          -- response when the review is closed. If headless applied, emit it now.
+          -- Forced iteration control: evaluate stop conditions after Edit tool
           if fn.name == "Edit" then
-            local staged = content:find("Pending diff %(staged%)") or content:find("deferred review; not written")
             local file_key = (args and args.file_path) or "<unknown>"
-            if staged then
-              -- Hold the tool_call_id so we can emit the real tool response later.
-              c._pending_edit_tools = c._pending_edit_tools or {}
-              c._pending_edit_tools[file_key] = { tool_call_id = schema.id, pre_content = content }
-            else
-              chat_module.add_message(MT.TOOL, tostring(content), meta, schema.id)
-            end
-
-            -- Forced iteration control: evaluate stop conditions after Edit tool
             c._iter_map = c._iter_map or {}
             local st = c._iter_map[file_key] or { count = 0, last_hash = nil }
             st.count = (st.count or 0) + 1
@@ -148,9 +137,6 @@ function M.run_tool_calls(chat_module, tool_schemas)
                 deferred_to_open = file_key
               end
             end
-          else
-            -- Non-Edit tools: emit immediately
-            chat_module.add_message(MT.TOOL, tostring(content), meta, schema.id)
           end
 
           break
