@@ -126,7 +126,7 @@ end
 M.meta = {
   name = "Edit",
   description = utils.read_description("edit")
-    .. " The 'edits' should be provided in the order they appear in the file.",
+    .. " Edits may be provided in any order; the engine applies them order-invariantly and resolves overlaps.",
   parameters = {
     type = "object",
     properties = {
@@ -144,7 +144,7 @@ M.meta = {
       },
       edits = {
         type = "array",
-        description = "Array of edit operations, each containing old_string and new_string. MUST be in file order.",
+        description = "Array of edit operations, each containing old_string and new_string. Order is not required.",
         items = {
           type = "object",
           properties = {
@@ -251,109 +251,173 @@ M.run = function(args)
   local orig_lines = split_lines(normalise_eol(content))
   strip_cr(orig_lines)
 
-  -- NEW: Stateful, sequential application logic
+  -- Order-invariant, multi-pass application logic
   local working_lines = vim.deepcopy(orig_lines)
-  local search_start_line = 1 -- Our "bookmark" for where to start the next search
   local total_replacements = 0
   local skipped_already_applied = 0
 
+  -- Preprocess edits into a pending list with split/normalised lines
+  local pending = {}
   for i, edit in ipairs(edits) do
     local old_lines = split_lines(normalise_eol(edit.old_string))
+    local new_lines = split_lines(normalise_eol(edit.new_string))
     strip_cr(old_lines)
+    strip_cr(new_lines)
+    table.insert(pending, {
+      index = i,
+      old_lines = old_lines,
+      new_lines = new_lines,
+      kind = (#old_lines == 0) and "insert" or "replace",
+    })
+  end
 
-    local start_line, end_line
-    if #old_lines == 0 then
-      start_line, end_line = 1, 0
-    else
-      -- Use the bookmark to hint the finder where to start looking
-      start_line, end_line = finder.find_block_location(working_lines, old_lines, search_start_line, nil)
-    end
-
-    if not start_line then
-      -- Idempotency: if the new_string already exists, treat this as already-applied and skip.
-      local candidate_new_lines = split_lines(normalise_eol(edit.new_string))
-      strip_cr(candidate_new_lines)
-      local s2, e2 = finder.find_block_location(working_lines, candidate_new_lines, search_start_line, nil)
-      if s2 then
-        skipped_already_applied = skipped_already_applied + 1
-        -- Advance the bookmark past the already-present block to keep ordering semantics
-        search_start_line = e2 + 1
-        -- Proceed to next edit without error or changes
+  local function apply_replacement_at(working, s, e, new_lines)
+    -- Determine base indent from minimal-indented non-empty line within [s,e]
+    local base_indent = ""
+    if s and e and s >= 1 and e >= s then
+      local _, idx = range_min_indent_line(working, s, e)
+      if idx and working[idx] then
+        base_indent = leading_ws(working[idx])
       else
-        -- Since we now assume in-order edits, a failure to find is a critical error.
-        local verbose = table.concat({
-          string.format(
-            "Edit %d: Could not find matching block for old_string starting from line %d",
-            i,
-            search_start_line
-          ),
-          string.format("File: %s", rel_path),
-          "Context (first 60 lines from search point):",
-          utils.make_code_block(
-            table.concat(
-              vim.list_slice(working_lines, search_start_line, math.min(#working_lines, search_start_line + 59)),
-              "\n"
-            ),
-            ""
-          ) or "",
-          "old_string:",
-          utils.make_code_block(edit.old_string or "", "") or "",
-          "new_string:",
-          utils.make_code_block(edit.new_string or "", "") or "",
-        }, "\n\n")
-        vim.notify("NeoAI Edit error:\n" .. verbose, vim.log.levels.ERROR, { title = "NeoAI" })
-        return verbose
+        base_indent = leading_ws(working[s] or "")
       end
     else
-      -- Apply the edit to the working copy of the lines
-      local new_lines = split_lines(normalise_eol(edit.new_string))
-      strip_cr(new_lines)
+      base_indent = leading_ws(working[s] or "")
+    end
 
-      -- Determine the base indent from the smallest-indented non-empty line in the matched range.
-      local base_indent = ""
-      if start_line and end_line and start_line >= 1 and end_line >= start_line then
-        local _, idx = range_min_indent_line(working_lines, start_line, end_line)
-        if idx and working_lines[idx] then
-          base_indent = leading_ws(working_lines[idx])
+    local adjusted_new = {}
+    local dedented = dedent(new_lines)
+    for k, line in ipairs(dedented) do
+      if line:match("%S") then
+        adjusted_new[k] = base_indent .. line
+      else
+        adjusted_new[k] = ""
+      end
+    end
+
+    local num_to_remove = e - s + 1
+    if num_to_remove < 0 then
+      num_to_remove = 0
+    end
+    for _ = 1, num_to_remove do
+      table.remove(working, s)
+    end
+    for j, line in ipairs(adjusted_new) do
+      table.insert(working, s - 1 + j, line)
+    end
+  end
+
+  local max_passes = 3
+  local pass = 0
+  while #pending > 0 and pass < max_passes do
+    pass = pass + 1
+    local next_pending = {}
+
+    -- Collect candidate matches for replacements
+    local candidates = {}
+    for _, item in ipairs(pending) do
+      if item.kind == "replace" then
+        local s, e = finder.find_block_location(working_lines, item.old_lines, 1, nil)
+        if s then
+          table.insert(candidates, { item = item, s = s, e = e })
         else
-          base_indent = leading_ws(working_lines[start_line] or "")
+          -- Idempotency: treat as already applied if new block exists
+          local ns, _ = finder.find_block_location(working_lines, item.new_lines, 1, nil)
+          if ns then
+            skipped_already_applied = skipped_already_applied + 1
+            total_replacements = total_replacements + 0
+          else
+            table.insert(next_pending, item)
+          end
         end
       else
-        base_indent = leading_ws(working_lines[start_line] or "")
+        -- Insert handled after replacements
+        table.insert(next_pending, item)
       end
+    end
 
-      -- Dedent the incoming new_lines by their minimal common indentation,
-      -- then re-indent them with the base indent derived from the context.
-      local adjusted_new_lines = {}
-      local dedented = dedent(new_lines)
-      for k, line in ipairs(dedented) do
-        if line:match("%S") then
-          adjusted_new_lines[k] = base_indent .. line
-        else
-          adjusted_new_lines[k] = ""
+    -- Resolve overlapping matches: sort by start, pick non-overlapping
+    table.sort(candidates, function(a, b)
+      if a.s == b.s then
+        return (a.e - a.s) < (b.e - b.s)
+      end
+      return a.s < b.s
+    end)
+
+    local selected = {}
+    local last_end = 0
+    for _, c in ipairs(candidates) do
+      if c.s > last_end then
+        table.insert(selected, c)
+        last_end = c.e
+      else
+        -- Defer overlapping candidates
+        table.insert(next_pending, c.item)
+      end
+    end
+
+    -- Apply selected replacements left-to-right; re-locate just before applying
+    for _, c in ipairs(selected) do
+      local s_now, e_now = finder.find_block_location(working_lines, c.item.old_lines, 1, nil)
+      if s_now then
+        apply_replacement_at(working_lines, s_now, e_now, c.item.new_lines)
+        total_replacements = total_replacements + 1
+      else
+        table.insert(next_pending, c.item)
+      end
+    end
+
+    -- Handle insertions (empty old_string): insert at top in pass 1, else append at end
+    local inserts = {}
+    for _, item in ipairs(next_pending) do
+      if item.kind == "insert" then
+        table.insert(inserts, item)
+      end
+    end
+    if #inserts > 0 then
+      -- Remove inserts from next_pending
+      local filtered = {}
+      local to_insert_map = {}
+      for _, it in ipairs(inserts) do
+        to_insert_map[it] = true
+      end
+      for _, it in ipairs(next_pending) do
+        if not to_insert_map[it] then
+          table.insert(filtered, it)
         end
       end
+      next_pending = filtered
 
-      -- Perform the replacement on the working_lines table
-      local num_to_remove = end_line - start_line + 1
-      if num_to_remove < 0 then
-        num_to_remove = 0
+      for _, ins in ipairs(inserts) do
+        -- For lack of a precise anchor, choose beginning on first pass, end otherwise
+        local pos = (pass == 1) and 1 or (#working_lines + 1)
+        -- No indentation context for pure insertion; use dedented content as-is
+        local dedented = dedent(ins.new_lines)
+        for j = #dedented, 1, -1 do
+          table.insert(working_lines, pos, dedented[j])
+        end
+        total_replacements = total_replacements + 1
       end
-
-      for _ = 1, num_to_remove do
-        table.remove(working_lines, start_line)
-      end
-
-      for j, line in ipairs(adjusted_new_lines) do
-        table.insert(working_lines, start_line - 1 + j, line)
-      end
-
-      total_replacements = total_replacements + 1
-
-      -- CRITICAL: Update the bookmark for the next search.
-      -- It's the line where the edit started plus the number of lines we added.
-      search_start_line = start_line + #adjusted_new_lines
     end
+
+    pending = next_pending
+  end
+
+  if #pending > 0 then
+    -- Build a helpful error including a preview of the first pending block
+    local first = pending[1]
+    local preview_old = utils.make_code_block(table.concat(first.old_lines or {}, "\n"), "") or ""
+    local preview_new = utils.make_code_block(table.concat(first.new_lines or {}, "\n"), "") or ""
+    local verbose = table.concat({
+      "Some edits could not be applied after multiple passes.",
+      string.format("Unapplied edits remaining: %d", #pending),
+      "Example old_string:",
+      preview_old,
+      "Example new_string:",
+      preview_new,
+    }, "\n\n")
+    vim.notify("NeoAI Edit error:\n" .. verbose, vim.log.levels.ERROR, { title = "NeoAI" })
+    -- Continue with applied changes; do not hard-fail the whole run
   end
 
   if total_replacements == 0 then

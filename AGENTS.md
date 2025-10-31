@@ -24,9 +24,8 @@ Key components:
 - lua/neoai/commands.lua — User commands
 
 The system prompt automatically includes a list of available tools and, if present, the contents of this AGENTS.md.
+- Edit tool calls are run in deferred mode (no inline UI shown immediately). The resulting diffs are staged internally and the assistant pauses immediately for review. Edits are applied order‑invariantly: matches are collected across the file, overlaps resolved left‑to‑right, and a few passes attempted when needed.
 
-### Edit + Diagnostics feedback loop (important)
-- Edit tool calls are run in deferred mode (no inline UI shown immediately). The resulting diffs are staged internally and the assistant pauses immediately for review. Edits are applied sequentially with a forward scan from the previous match position; if not found ahead, a wrap-around search is attempted up to the previous position.
 - Idempotent edits: if an edit's old_string cannot be found but its new_string is already present, the edit is skipped and counted as "already applied" rather than failing the run. A summary of applied vs skipped edits is included in the response.
 - After each edit, the plugin fetches LSP diagnostics for the edited buffer and emits machine-readable markers (diff hash, diagnostics count).
 - The tool runner opens an inline diff review as soon as there are staged changes. The assistant does not continue until the review is closed. If the UI cannot open (e.g., headless), the assistant pauses and informs the user.
