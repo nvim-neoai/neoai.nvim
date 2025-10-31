@@ -801,6 +801,19 @@ function chat.send_to_ai()
         else
           -- Skip orphan tool messages to satisfy provider constraints
         end
+      elseif msg.type == MESSAGE_TYPES.SYSTEM then
+        -- Surface inline diff outcomes back to the model so it knows what actually happened.
+        local tooln = msg.metadata and msg.metadata.tool_name or ""
+        local content = msg.content or ""
+        local should_include = false
+        if type(tooln) == "string" and tooln == "Edit-Outcome" then
+          should_include = true
+        elseif type(content) == "string" and content:find("NeoAI%-Diff%-Hash:") then
+          should_include = true
+        end
+        if should_include then
+          table.insert(messages, { role = "system", content = content })
+        end
       elseif msg.type == MESSAGE_TYPES.USER then
         -- Any user input breaks a pending tool response chain
         pending_tool_ids = nil

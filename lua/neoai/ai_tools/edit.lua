@@ -187,16 +187,20 @@ M.run = function(args)
 
   if type(rel_path) ~= "string" then
     local keys = {}
+    local vals = {}
     if type(args) == "table" then
-      for k, _ in pairs(args) do
+      for k, v in pairs(args) do
         table.insert(keys, tostring(k))
+        table.insert(vals, tostring(v))
       end
       table.sort(keys)
+      table.sort(vals)
     end
     local msg = string.format(
-      "Edit tool error: 'file_path' must be a string (got %s). Args keys: [%s]",
+      "Edit tool error: 'file_path' must be a string (got %s). Args keys: [%s]. Args: [%s]",
       type(rel_path),
-      table.concat(keys, ", ")
+      table.concat(keys, ", "),
+      table.concat(vals, ", ")
     )
     vim.notify(msg, vim.log.levels.ERROR, { title = "NeoAI" })
     return msg
@@ -417,7 +421,14 @@ M.run = function(args)
       preview_new,
     }, "\n\n")
     vim.notify("NeoAI Edit error:\n" .. verbose, vim.log.levels.ERROR, { title = "NeoAI" })
-    -- Continue with applied changes; do not hard-fail the whole run
+    -- Also include a machine-readable marker so the runner/model can react
+    local marker = string.format("NeoAI-Unapplied-Edits: %d", #pending)
+    -- Append to a side-channel note that is included in responses below
+    M._last_unapplied_count = #pending
+    M._last_unapplied_marker = marker
+  else
+    M._last_unapplied_count = 0
+    M._last_unapplied_marker = nil
   end
 
   if total_replacements == 0 then
@@ -517,6 +528,10 @@ M.run = function(args)
       string.format("NeoAI-Diff-Hash: %s", diff_hash),
       string.format("NeoAI-Diagnostics-Count: %d", diag_count),
     }
+    if M._last_unapplied_marker then
+      table.insert(parts, M._last_unapplied_marker)
+    end
+
     return table.concat(parts, "\n\n")
   end
 
@@ -593,6 +608,10 @@ M.run = function(args)
       string.format("NeoAI-Diff-Hash: %s", diff_hash),
       string.format("NeoAI-Diagnostics-Count: %d", diag_count),
     }
+    if M._last_unapplied_marker then
+      table.insert(parts, M._last_unapplied_marker)
+    end
+
     return table.concat(parts, "\n\n")
   end
 
