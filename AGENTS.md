@@ -33,6 +33,10 @@ The system prompt automatically includes a list of available tools and, if prese
 - Previously the runner waited for certain stop conditions before surfacing a review; this has been changed to avoid proceeding while changes are staged.
 - This ensures we never “continue with changes staged”.
 
+### Error surfacing
+- Tool argument JSON errors are surfaced in the chat and via `vim.notify`. When a tool call provides invalid JSON for arguments, the runner reports the decode error with a byte length and a safe preview and skips executing that tool call.
+- Edit tool type validation failures are also surfaced via `vim.notify` and returned to the chat. Examples: missing/invalid `file_path`, non-array `edits`, or per-edit field type errors. Messages include the received types and available argument keys for easier debugging.
+
 
 ---
 
@@ -93,5 +97,6 @@ The system prompt automatically includes a list of available tools and, if prese
 - This file is auto-included into the system prompt at runtime.
 - If you change any of the topics addressed here (overview, commands, code style, testing, security, PR process), update this file as part of the same change.
 - Do not bloat this file; include information that materially improves the agent’s effectiveness working on this repository.
+
 
 

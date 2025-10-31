@@ -186,16 +186,33 @@ M.run = function(args)
   local force_headless = (args and args.interactive_review == false) or false
 
   if type(rel_path) ~= "string" then
-    return "file_path must be a string"
+    local keys = {}
+    if type(args) == "table" then
+      for k, _ in pairs(args) do
+        table.insert(keys, tostring(k))
+      end
+      table.sort(keys)
+    end
+    local msg = string.format(
+      "Edit tool error: 'file_path' must be a string (got %s). Args keys: [%s]",
+      type(rel_path),
+      table.concat(keys, ", ")
+    )
+    vim.notify(msg, vim.log.levels.ERROR, { title = "NeoAI" })
+    return msg
   end
   if type(edits) ~= "table" then
-    return "edits must be an array"
+    local msg = string.format("Edit tool error: 'edits' must be an array/table (got %s)", type(edits))
+    vim.notify(msg, vim.log.levels.ERROR, { title = "NeoAI" })
+    return msg
   end
 
   for i, edit in ipairs(edits) do
     local err = validate_edit(edit, i)
     if err then
-      return err
+      local msg = "Edit tool error: " .. err
+      vim.notify(msg, vim.log.levels.ERROR, { title = "NeoAI" })
+      return msg
     end
   end
 
