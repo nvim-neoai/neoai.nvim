@@ -854,9 +854,10 @@ function chat.stream_ai_response(messages)
   chat.chat_state.streaming_active = true
   enable_ctrl_c_cancel()
 
-  -- Defer Tree-sitter suspension until the first streamed token arrives
-  -- to keep highlighting active during the "thinking" phase.
-  -- Suspension now occurs in the stream callback.
+  if chat.chat_state.is_open and chat.chat_state.buffers.chat and not chat.chat_state._ts_suspended then
+    ts_suspend(chat.chat_state.buffers.chat)
+    chat.chat_state._ts_suspended = true
+  end
 
   local reason, content, tool_calls_response = "", "", {}
   local start_time = os.time()
@@ -947,13 +948,6 @@ function chat.stream_ai_response(messages)
       capture_thinking_duration_for_announce()
       safe_stop_and_close_timer(thinking_timeout_timer)
       chat.chat_state._timeout_timer = nil
-
-      -- Suspend Tree-sitter only once streaming actually begins, to avoid
-      -- disabling highlighting during the pre-stream "thinking" phase.
-      if chat.chat_state.is_open and chat.chat_state.buffers.chat and not chat.chat_state._ts_suspended then
-        ts_suspend(chat.chat_state.buffers.chat)
-        chat.chat_state._ts_suspended = true
-      end
     end
 
     if chunk.type == "content" and chunk.data ~= "" then
