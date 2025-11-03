@@ -26,7 +26,7 @@ Key components:
 The system prompt automatically includes a list of available tools and, if present, the contents of this AGENTS.md.
 - Edit tool calls are run in deferred mode (no inline UI shown immediately). The resulting diffs are staged internally and the assistant pauses immediately for review. Edits are applied order‑invariantly: matches are collected across the file, overlaps resolved left‑to‑right, and a few passes attempted when needed.
 
-- Idempotent edits: if an edit's old_string cannot be found but its new_string is already present, the edit is skipped and counted as "already applied" rather than failing the run. A summary of applied vs skipped edits is included in the response.
+- Idempotent edits: if an edit's decoded old block cannot be found but its decoded new block is already present, the edit is skipped and counted as "already applied" rather than failing the run. A summary of applied vs skipped edits is included in the response.
 - After each edit, the plugin fetches LSP diagnostics for the edited buffer and emits machine-readable markers (diff hash, diagnostics count).
 - The tool runner opens an inline diff review as soon as there are staged changes. The assistant does not continue until the review is closed. If the UI cannot open (e.g., headless), the assistant pauses and informs the user.
 - Previously the runner waited for certain stop conditions before surfacing a review; this has been changed to avoid proceeding while changes are staged.
@@ -34,7 +34,8 @@ The system prompt automatically includes a list of available tools and, if prese
 
 ### Error surfacing
 - Tool argument JSON errors are surfaced in the chat and via `vim.notify`. When a tool call provides invalid JSON for arguments, the runner reports the decode error with a byte length and a safe preview and skips executing that tool call.
-- Edit tool type validation failures are also surfaced via `vim.notify` and returned to the chat. Examples: missing/invalid `file_path`, non-array `edits`, or per-edit field type errors. Messages include the received types and available argument keys for easier debugging.
+- Edit tool now requires base64 payloads: each edit uses `old_b64` and `new_b64` (RFC 4648; whitespace ignored; URL-safe accepted). Invalid base64 is reported precisely (first bad position/quartet) and aborts the call.
+- Edit tool type validation failures are surfaced via `vim.notify` and returned to the chat. Examples: missing/invalid `file_path`, non-array `edits`, or per-edit field type errors. Messages include the received types and available argument keys for easier debugging.
 
 
 ---

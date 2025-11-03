@@ -51,7 +51,6 @@ function M.run_tool_calls(chat_module, tool_schemas)
   -- Track whether we should pause for user review after processing tool calls
   local should_gate = false
   local deferred_to_open ---@type string|nil
-  local any_deferred = false -- Saw at least one Edit call staged for deferred review
 
   -- Helper to extract orchestration markers from tool output
   local function parse_markers(text)
@@ -78,11 +77,10 @@ function M.run_tool_calls(chat_module, tool_schemas)
           -- Force Edit calls to run headlessly and defer user review
           if fn.name == "Edit" then
             -- Print the raw JSON arguments for the Edit tool call to :messages
-            vim.print("[NeoAI] Edit tool call JSON:", fn.arguments)
+            --vim.print("[NeoAI] Edit tool call JSON:", fn.arguments)
 
             args = args or {}
             args.interactive_review = false
-            any_deferred = true
             local file_key0 = (args and args.file_path) or "<unknown>"
             if not deferred_to_open then
               deferred_to_open = file_key0

@@ -126,7 +126,7 @@ end
 M.meta = {
   name = "Edit",
   description = utils.read_description("edit")
-    .. " Edits may be provided in any order; the engine applies them order-invariantly and resolves overlaps.",
+      .. " Edits may be provided in any order; the engine applies them order-invariantly and resolves overlaps.",
   parameters = {
     type = "object",
     properties = {
@@ -140,21 +140,24 @@ M.meta = {
       },
       interactive_review = {
         type = "boolean",
-        description = "When false and a UI is present, do not open the inline diff UI yet; stage changes for a deferred review and do not write to disk. Only when no UI is present will changes be applied headlessly.",
+        description =
+        "When false and a UI is present, do not open the inline diff UI yet; stage changes for a deferred review and do not write to disk. Only when no UI is present will changes be applied headlessly.",
       },
       edits = {
         type = "array",
-        description = "Array of edit operations, each containing old_string and new_string. Order is not required.",
+        description =
+        "Array of edit operations, each containing old_b64 and new_b64 (base64, RFC 4648). Order is not required.",
         items = {
           type = "object",
           properties = {
-            old_string = {
+            old_b64 = {
               type = "string",
-              description = "Exact text to replace (empty string means insert at beginning of file)",
+              description =
+              "Base64-encoded exact text to replace (empty decoded string means insert at beginning of file)",
             },
-            new_string = { type = "string", description = "The replacement text" },
+            new_b64 = { type = "string", description = "Base64-encoded replacement text" },
           },
-          required = { "old_string", "new_string" },
+          required = { "old_b64", "new_b64" },
         },
       },
     },
@@ -163,16 +166,16 @@ M.meta = {
   },
 }
 
---- Validate an edit operation.
+--- Validate an edit operation (base64-only fields).
 ---@param edit table: The edit operation.
 ---@param index integer: The index of the edit operation.
 ---@return string|nil: An error message if validation fails, otherwise nil.
 local function validate_edit(edit, index)
-  if type(edit.old_string) ~= "string" then
-    return string.format("Edit %d: 'old_string' must be a string", index)
+  if type(edit.old_b64) ~= "string" then
+    return string.format("Edit %d: 'old_b64' must be a string (base64)", index)
   end
-  if type(edit.new_string) ~= "string" then
-    return string.format("Edit %d: 'new_string' must be a string", index)
+  if type(edit.new_b64) ~= "string" then
+    return string.format("Edit %d: 'new_b64' must be a string (base64)", index)
   end
   return nil
 end
@@ -194,11 +197,10 @@ M.run = function(args)
       table.sort(keys)
     end
     local msg = string.format(
-      "Edit tool error: 'file_path' must be a string (got %s), value: %s. Args keys: [%s]. Args: [%s]",
+      "Edit tool error: 'file_path' must be a string (got %s), value: %s. Args keys: [%s]",
       type(rel_path),
-      rel_path,
-      table.concat(keys, ", "),
-      table.concat(vals, ", ")
+      tostring(rel_path),
+      table.concat(keys, ", ")
     )
     vim.notify(msg, vim.log.levels.ERROR, { title = "NeoAI" })
     return msg
@@ -258,11 +260,79 @@ M.run = function(args)
   local total_replacements = 0
   local skipped_already_applied = 0
 
-  -- Preprocess edits into a pending list with split/normalised lines
+  -- Base64 codec (RFC 4648) with URL-safe support and whitespace tolerance
+  local function b64_normalise(s)
+    s = tostring(s or "")
+    -- remove whitespace and convert URL-safe
+    s = s:gsub("%s+", ""):gsub("%-", "+"):gsub("_", "/")
+    -- pad with '=' to multiple of 4
+    local m = #s % 4
+    if m == 2 then
+      s = s .. "=="
+    elseif m == 3 then
+      s = s .. "="
+    elseif m ~= 0 and #s > 0 then
+      -- if m==1 this is invalid, keep as-is and decoder will error
+    end
+    return s
+  end
+  local b64_map = {}
+  do
+    local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    for i = 1, #alphabet do b64_map[alphabet:sub(i, i)] = i - 1 end
+  end
+  local function b64_decode(str)
+    local s = b64_normalise(str)
+    -- validate characters
+    local invalid_pos = s:find("[^A-Za-z0-9%+/=]")
+    if invalid_pos then
+      return nil, string.format("Invalid base64 character at position %d", invalid_pos)
+    end
+    if #s == 0 then return "", nil end
+    local out = {}
+    local i = 1
+    while i <= #s do
+      local c1, c2, c3, c4 = s:sub(i, i), s:sub(i + 1, i + 1), s:sub(i + 2, i + 2), s:sub(i + 3, i + 3)
+      if not c2 then return nil, "Truncated base64 input" end
+      local v1, v2 = b64_map[c1], b64_map[c2]
+      if not v1 or not v2 then return nil, string.format("Invalid base64 quartet starting at %d", i) end
+      local v3 = c3 == "=" and nil or b64_map[c3]
+      local v4 = c4 == "=" and nil or b64_map[c4]
+      if c3 and c3 ~= "=" and not v3 then return nil, string.format("Invalid base64 quartet starting at %d", i) end
+      if c4 and c4 ~= "=" and not v4 then return nil, string.format("Invalid base64 quartet starting at %d", i) end
+      -- arithmetic computation to avoid bit library dependency
+      local b1 = (v1 * 4) + math.floor(v2 / 16)
+      table.insert(out, string.char(b1))
+      if v3 ~= nil then
+        local b2 = ((v2 % 16) * 16) + math.floor(v3 / 4)
+        table.insert(out, string.char(b2))
+      end
+      if v3 ~= nil and v4 ~= nil then
+        local b3 = ((v3 % 4) * 64) + v4
+        table.insert(out, string.char(b3))
+      end
+      i = i + 4
+    end
+    return table.concat(out), nil
+  end
+
+  -- Preprocess edits into a pending list with decoded, split, normalised lines
   local pending = {}
   for i, edit in ipairs(edits) do
-    local old_lines = split_lines(normalise_eol(edit.old_string))
-    local new_lines = split_lines(normalise_eol(edit.new_string))
+    local old_dec, e1 = b64_decode(edit.old_b64)
+    if not old_dec then
+      local msg = string.format("Edit tool error: Edit %d old_b64 decode failed: %s", i, e1 or "unknown error")
+      vim.notify(msg, vim.log.levels.ERROR, { title = "NeoAI" })
+      return msg
+    end
+    local new_dec, e2 = b64_decode(edit.new_b64)
+    if not new_dec then
+      local msg = string.format("Edit tool error: Edit %d new_b64 decode failed: %s", i, e2 or "unknown error")
+      vim.notify(msg, vim.log.levels.ERROR, { title = "NeoAI" })
+      return msg
+    end
+    local old_lines = split_lines(normalise_eol(old_dec))
+    local new_lines = split_lines(normalise_eol(new_dec))
     strip_cr(old_lines)
     strip_cr(new_lines)
     table.insert(pending, {
@@ -369,7 +439,7 @@ M.run = function(args)
       end
     end
 
-    -- Handle insertions (empty old_string): insert at top in pass 1, else append at end
+    -- Handle insertions (empty decoded old block): insert at top in pass 1, else append at end
     local inserts = {}
     for _, item in ipairs(next_pending) do
       if item.kind == "insert" then
@@ -413,9 +483,9 @@ M.run = function(args)
     local verbose = table.concat({
       "Some edits could not be applied after multiple passes.",
       string.format("Unapplied edits remaining: %d", #pending),
-      "Example old_string:",
+      "Example (decoded) old block:",
       preview_old,
-      "Example new_string:",
+      "Example (decoded) new block:",
       preview_new,
     }, "\n\n")
     vim.notify("NeoAI Edit error:\n" .. verbose, vim.log.levels.ERROR, { title = "NeoAI" })
