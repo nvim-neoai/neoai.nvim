@@ -99,6 +99,14 @@ function M.run_tool_calls(chat_module, tool_schemas)
               if resp.display and resp.display ~= "" then
                 meta.display = resp.display
               end
+              -- If the tool provides a params_line, prepend it to the content so it shows in chat
+              if resp.params_line and resp.params_line ~= "" then
+                if content ~= "" then
+                  content = tostring(resp.params_line) .. "\n\n" .. content
+                else
+                  content = tostring(resp.params_line)
+                end
+              end
             else
               content = type(resp) == "string" and resp or tostring(resp) or ""
             end

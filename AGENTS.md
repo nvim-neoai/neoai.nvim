@@ -32,6 +32,11 @@ The system prompt automatically includes a list of available tools and, if prese
 - Previously the runner waited for certain stop conditions before surfacing a review; this has been changed to avoid proceeding while changes are staged.
 - This ensures we never “continue with changes staged”.
 
+Tool output notes:
+- Grep tool now echoes the parameters used. The runner prepends a single line like:
+  "Parameters used: query_string="pattern"; use_regex=false; glob=nil"
+  above the result block when available.
+
 ### Error surfacing
 - Tool argument JSON errors are surfaced in the chat and via `vim.notify`. When a tool call provides invalid JSON for arguments, the runner reports the decode error with a byte length and a safe preview and skips executing that tool call.
 - Edit tool now requires base64 payloads: each edit uses `old_b64` and `new_b64` (RFC 4648; whitespace ignored; URL-safe accepted). Invalid base64 is reported precisely (first bad position/quartet) and aborts the call.
@@ -97,6 +102,7 @@ The system prompt automatically includes a list of available tools and, if prese
 - This file is auto-included into the system prompt at runtime.
 - If you change any of the topics addressed here (overview, commands, code style, testing, security, PR process), update this file as part of the same change.
 - Do not bloat this file; include information that materially improves the agent’s effectiveness working on this repository.
+
 
 
 

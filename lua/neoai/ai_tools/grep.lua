@@ -27,25 +27,40 @@ M.meta = {
   },
 }
 
+--- Format a single-line summary of parameters used for the grep call.
+--- @param query string
+--- @param use_regex boolean
+--- @param glob string|nil
+--- @return string
+local function make_params_line(query, use_regex, glob)
+  local q = string.format("%q", query or "")
+  local g = glob and string.format("%q", glob) or "nil"
+  return string.format("Parameters used: query_string=%s; use_regex=%s; glob=%s", q, tostring(use_regex), g)
+end
+
 --- Executes the grep command with given arguments.
 --- @param args table: Contains optional parameters 'query_string', 'use_regex', and 'glob'.
---- @return string: The results of the grep search or an error message.
+--- @return table|string: A table with `content` and `params_line`, or an error message.
 M.run = function(args)
   local query = args.query_string
-  if not query or #query == 0 then
-    return "Error: 'query_string' is required."
-  end
-
   local use_regex = args.use_regex == true
+  local glob = (args.glob and #args.glob > 0) and args.glob or nil
+
+  if not query or #query == 0 then
+    return {
+      content = "Error: 'query_string' is required.",
+      params_line = make_params_line(query or "", use_regex, glob),
+    }
+  end
 
   -- Base ripgrep command with vimgrep-style output
   local cmd = { "rg", "--vimgrep", "--color", "never" }
   if not use_regex then
     table.insert(cmd, "--fixed-strings")
   end
-  if args.glob and #args.glob > 0 then
+  if glob then
     table.insert(cmd, "-g")
-    table.insert(cmd, args.glob)
+    table.insert(cmd, glob)
   end
   -- Use -e to ensure the pattern is treated as the pattern argument
   table.insert(cmd, "-e")
@@ -53,7 +68,10 @@ M.run = function(args)
 
   local ok, result = pcall(vim.fn.systemlist, cmd)
   if not ok then
-    return "Error running rg: " .. tostring(result)
+    return {
+      content = "Error running rg: " .. tostring(result),
+      params_line = make_params_line(query, use_regex, glob),
+    }
   end
 
   local exit_code = vim.v.shell_error or 0
@@ -61,21 +79,27 @@ M.run = function(args)
   -- If ripgrep returned an error and we were in regex mode, try a safe fallback to literal search
   if use_regex and (exit_code ~= 0 and exit_code ~= 1) then
     local retry_cmd = { "rg", "--vimgrep", "--color", "never", "--fixed-strings" }
-    if args.glob and #args.glob > 0 then
+    if glob then
       table.insert(retry_cmd, "-g")
-      table.insert(retry_cmd, args.glob)
+      table.insert(retry_cmd, glob)
     end
     table.insert(retry_cmd, "-e")
     table.insert(retry_cmd, query)
     local ok2, retry_res = pcall(vim.fn.systemlist, retry_cmd)
     if ok2 and not vim.tbl_isempty(retry_res) then
-      return utils.make_code_block(table.concat(retry_res, "\n"), "txt")
+      return {
+        content = utils.make_code_block(table.concat(retry_res, "\n"), "txt"),
+        params_line = make_params_line(query, false, glob),
+      }
     end
   end
 
   if vim.tbl_isempty(result) then
     -- 0 with empty output is unlikely; rg uses 1 for 'no matches'
-    return "No matches found for: " .. query
+    return {
+      content = "No matches found for: " .. query,
+      params_line = make_params_line(query, use_regex, glob),
+    }
   end
 
   -- In some environments systemlist may capture stderr. If we detect a regex parse error
@@ -83,20 +107,26 @@ M.run = function(args)
   local joined = table.concat(result, "\n")
   if use_regex and (joined:find("regex parse error", 1, true) or joined:find("unclosed group", 1, true)) then
     local retry_cmd = { "rg", "--vimgrep", "--color", "never", "--fixed-strings" }
-    if args.glob and #args.glob > 0 then
+    if glob then
       table.insert(retry_cmd, "-g")
-      table.insert(retry_cmd, args.glob)
+      table.insert(retry_cmd, glob)
     end
     table.insert(retry_cmd, "-e")
     table.insert(retry_cmd, query)
     local ok2, retry_res = pcall(vim.fn.systemlist, retry_cmd)
     if ok2 and not vim.tbl_isempty(retry_res) then
-      return utils.make_code_block(table.concat(retry_res, "\n"), "txt")
+      return {
+        content = utils.make_code_block(table.concat(retry_res, "\n"), "txt"),
+        params_line = make_params_line(query, false, glob),
+      }
     end
   end
 
   -- Wrap results in a code block for readability
-  return utils.make_code_block(joined, "txt")
+  return {
+    content = utils.make_code_block(joined, "txt"),
+    params_line = make_params_line(query, use_regex, glob),
+  }
 end
 
 return M
