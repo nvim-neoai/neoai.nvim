@@ -13,6 +13,9 @@ local deferred_reviews = {}
 
 --[[
   UTILITY FUNCTIONS (with improved indentation handling)
+
+  NOTE: Callers must buffer the full tool-call arguments (no partial streaming)
+  before invoking this tool. Partial calls will be ignored with a diagnostic.
 --]]
 local function split_lines(str)
   return vim.split(str, "\n", { plain = true })
@@ -106,6 +109,21 @@ local function unified_diff(old_lines, new_lines)
   return diff or "(no changes)"
 end
 
+-- Helper: get unrecognised keys in a shallow table against an allowed set
+local function unrecognised_keys(tbl, allowed)
+  local unk = {}
+  if type(tbl) ~= "table" then
+    return unk
+  end
+  for k, _ in pairs(tbl) do
+    if not allowed[tostring(k)] then
+      table.insert(unk, tostring(k))
+    end
+  end
+  table.sort(unk)
+  return unk
+end
+
 -- This function is called from chat.lua to close an open diffview window.
 function M.discard_all_diffs()
   -- ... (function is unchanged)
@@ -122,11 +140,11 @@ function M.discard_all_diffs()
   return "All pending edits discarded and buffer reverted."
 end
 
--- NEW: Simplified schema. No more line numbers from the AI.
 M.meta = {
   name = "Edit",
   description = utils.read_description("edit")
-      .. " Edits may be provided in any order; the engine applies them order-invariantly and resolves overlaps.",
+    .. " Edits may be provided in any order; the engine applies them order-invariantly and resolves overlaps."
+    .. " Caller must buffer the full tool-call arguments before invoking this tool (no partial streaming).",
   parameters = {
     type = "object",
     properties = {
@@ -136,19 +154,21 @@ M.meta = {
       },
       edits = {
         type = "array",
-        description =
-        "Array of edit operations, each containing old_b64 and new_b64 (base64, RFC 4648). Order is not required.",
+        description = "Array of edit operations, each containing old_string and new_string (plain text). Order is not required.",
         items = {
           type = "object",
           properties = {
-            old_b64 = {
+            old_string = {
               type = "string",
-              description =
-              "Base64-encoded exact text to replace (empty decoded string means insert at beginning of file)",
+              description = "Exact text block to replace (empty string means insert at beginning of file).",
             },
-            new_b64 = { type = "string", description = "Base64-encoded replacement text" },
+            new_string = {
+              type = "string",
+              description = "Replacement text block.",
+            },
           },
-          required = { "old_b64", "new_b64" },
+          required = { "old_string", "new_string" },
+          additionalProperties = false,
         },
       },
     },
@@ -157,16 +177,16 @@ M.meta = {
   },
 }
 
---- Validate an edit operation (base64-only fields).
+--- Validate an edit operation (plain text fields).
 ---@param edit table: The edit operation.
 ---@param index integer: The index of the edit operation.
 ---@return string|nil: An error message if validation fails, otherwise nil.
 local function validate_edit(edit, index)
-  if type(edit.old_b64) ~= "string" then
-    return string.format("Edit %d: 'old_b64' must be a string (base64)", index)
+  if type(edit.old_string) ~= "string" then
+    return string.format("Edit %d: 'old_string' must be a string", index)
   end
-  if type(edit.new_b64) ~= "string" then
-    return string.format("Edit %d: 'new_b64' must be a string (base64)", index)
+  if type(edit.new_string) ~= "string" then
+    return string.format("Edit %d: 'new_string' must be a string", index)
   end
   return nil
 end
@@ -179,20 +199,38 @@ M.run = function(args)
     return string.format("Edit tool: ignored call; arguments must be an object/table (got %s)", type(args))
   end
 
+  -- Warn about any unrecognised top-level keys
+  do
+    local allowed_top = { file_path = true, edits = true }
+    local unk = unrecognised_keys(args, allowed_top)
+    if #unk > 0 then
+      vim.notify(
+        "Edit tool: unrecognised top-level argument keys: [" .. table.concat(unk, ", ") .. "]",
+        vim.log.levels.WARN,
+        { title = "NeoAI" }
+      )
+    end
+  end
+
   local rel_path = args.file_path
   local edits = args.edits
 
   -- Gracefully ignore partial calls without spamming errors.
   if type(rel_path) ~= "string" or type(edits) ~= "table" then
     local keys = {}
-    if type(args) == "table" then
-      for k, _ in pairs(args) do
-        table.insert(keys, tostring(k))
-      end
-      table.sort(keys)
+    for k, _ in pairs(args) do
+      table.insert(keys, tostring(k))
     end
+    table.sort(keys)
+
     local preview = ""
-    pcall(function() preview = vim.inspect(args) end)
+    pcall(function()
+      preview = vim.inspect(args)
+    end)
+    if type(preview) == "string" and #preview > 4000 then
+      preview = preview:sub(1, 4000) .. " ... (truncated)"
+    end
+
     return string.format(
       "Edit tool: ignored call; expected 'file_path' (string) and 'edits' (array). Args keys: [%s]. Args preview: %s",
       table.concat(keys, ", "),
@@ -200,12 +238,22 @@ M.run = function(args)
     )
   end
 
+  -- Validate edits and warn about unrecognised keys per edit
+  local allowed_edit_keys = { old_string = true, new_string = true }
   for i, edit in ipairs(edits) do
     local err = validate_edit(edit, i)
     if err then
       local msg = "Edit tool error: " .. err
       vim.notify(msg, vim.log.levels.ERROR, { title = "NeoAI" })
       return msg
+    end
+    local unk = unrecognised_keys(edit, allowed_edit_keys)
+    if #unk > 0 then
+      vim.notify(
+        string.format("Edit tool: unrecognised keys in edit %d: [%s]", i, table.concat(unk, ", ")),
+        vim.log.levels.WARN,
+        { title = "NeoAI" }
+      )
     end
   end
 
@@ -246,66 +294,10 @@ M.run = function(args)
   local total_replacements = 0
   local skipped_already_applied = 0
 
-  -- Base64 codec (RFC 4648) with URL-safe support and whitespace tolerance
-  local function b64_normalise(s)
-    s = tostring(s or "")
-    -- remove whitespace and convert URL-safe
-    s = s:gsub("%s+", ""):gsub("%-", "+"):gsub("_", "/")
-    -- pad with '=' to multiple of 4
-    local m = #s % 4
-    if m == 2 then
-      s = s .. "=="
-    elseif m == 3 then
-      s = s .. "="
-    elseif m ~= 0 and #s > 0 then
-      -- if m==1 this is invalid, keep as-is and decoder will error
-    end
-    return s
-  end
-  local b64_map = {}
-  do
-    local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-    for i = 1, #alphabet do b64_map[alphabet:sub(i, i)] = i - 1 end
-  end
-  local function b64_decode(str)
-    local s = b64_normalise(str)
-    -- validate characters
-    local invalid_pos = s:find("[^A-Za-z0-9%+/=]")
-    if invalid_pos then
-      return nil, string.format("Invalid base64 character at position %d", invalid_pos)
-    end
-    if #s == 0 then return "", nil end
-    local out = {}
-    local i = 1
-    while i <= #s do
-      local c1, c2, c3, c4 = s:sub(i, i), s:sub(i + 1, i + 1), s:sub(i + 2, i + 2), s:sub(i + 3, i + 3)
-      if not c2 then return nil, "Truncated base64 input" end
-      local v1, v2 = b64_map[c1], b64_map[c2]
-      if not v1 or not v2 then return nil, string.format("Invalid base64 quartet starting at %d", i) end
-      local v3 = c3 == "=" and nil or b64_map[c3]
-      local v4 = c4 == "=" and nil or b64_map[c4]
-      if c3 and c3 ~= "=" and not v3 then return nil, string.format("Invalid base64 quartet starting at %d", i) end
-      if c4 and c4 ~= "=" and not v4 then return nil, string.format("Invalid base64 quartet starting at %d", i) end
-      -- arithmetic computation to avoid bit library dependency
-      local b1 = (v1 * 4) + math.floor(v2 / 16)
-      table.insert(out, string.char(b1))
-      if v3 ~= nil then
-        local b2 = ((v2 % 16) * 16) + math.floor(v3 / 4)
-        table.insert(out, string.char(b2))
-      end
-      if v3 ~= nil and v4 ~= nil then
-        local b3 = ((v3 % 4) * 64) + v4
-        table.insert(out, string.char(b3))
-      end
-      i = i + 4
-    end
-    return table.concat(out), nil
-  end
-
-  -- Preprocess edits into a pending list with decoded, split, normalised lines
+  -- Preprocess edits into a pending list with decoded, split, normalised lines (plain text)
   local pending = {}
   for i, edit in ipairs(edits) do
-    local raw_old = normalise_eol(edit.old_string)
+    local raw_old = normalise_eol(edit.old_string or "")
     local is_insert = (raw_old == "")
     local old_lines = is_insert and {} or split_lines(raw_old)
     -- Robustness in case old_lines becomes {""}
@@ -313,7 +305,7 @@ M.run = function(args)
       is_insert = true
       old_lines = {}
     end
-    local new_lines = split_lines(normalise_eol(edit.new_string))
+    local new_lines = split_lines(normalise_eol(edit.new_string or ""))
     strip_cr(old_lines)
     strip_cr(new_lines)
     table.insert(pending, {

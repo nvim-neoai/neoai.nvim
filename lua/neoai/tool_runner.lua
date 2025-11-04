@@ -80,7 +80,6 @@ function M.run_tool_calls(chat_module, tool_schemas)
             --vim.print("[NeoAI] Edit tool call JSON:", fn.arguments)
 
             args = args or {}
-            args.interactive_review = false
             local file_key0 = (args and args.file_path) or "<unknown>"
             if not deferred_to_open then
               deferred_to_open = file_key0

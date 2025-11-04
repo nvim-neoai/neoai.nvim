@@ -3,9 +3,14 @@
 - Apply one or more targeted edits to a file without sending the entire file content.
 - Create a new file when it does not exist. Parent directories are created automatically when writing to disk (fallback).
 
+# CALLER REQUIREMENTS
+
+- Buffer the full tool-call arguments before invoking this tool (no partial streaming). Partial/early calls are ignored with a diagnostic message.
+
 # HOW TO USE
 
 - Provide `file_path` and an array of `edits`.
+- Plain text only (no base64).
 - Each edit has:
   - `old_string`: The text to replace. Matching is robust to case and minor whitespace differences and uses multiple strategies (exact, trimmed, anchors, shrinking window, cross-line whitespace-collapsed substring, Tree-sitter when available, and normalised text). Provide a distinctive, contiguous block from the file. The order of edits is not important.
   - `new_string`: The replacement text. If `old_string` cannot be found but `new_string` is already present, the edit is treated as already applied and is skipped (idempotent behaviour).
@@ -29,6 +34,9 @@ The tool will attempt to display an inline diff (UI). If a UI is not available, 
   - Unapplied edits after the final pass are reported but do not block applied ones.
 - Whitespace-insensitive and case-tolerant matching fallbacks for robust edits.
 - Uses current, unsaved buffer content when available.
+- Argument validation and warnings:
+  - Partial or malformed calls are ignored with a diagnostic message that includes the provided keys and a preview.
+  - Unrecognised argument keys (top-level and per-edit) are logged as warnings; recognised keys are `file_path`, and within each edit `old_string` and `new_string`.
 - Inline diff UI:
   - Review and accept/reject hunks interactively:
     - <ct>: accept theirs (apply suggested change)
