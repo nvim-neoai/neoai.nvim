@@ -1,52 +1,54 @@
 # WHEN TO USE THIS TOOL
 
 - Apply one or more targeted edits to a file without sending the entire file content.
-- Create a new file if it does not exist; the tool can create necessary directories if specified.
+- Create a new file when it does not exist. Parent directories are created automatically when writing to disk (fallback).
 
 # HOW TO USE
 
-- Provide the `file_path` and an array of `edits`.
-- Each edit operation MUST use base64 fields:
-  - `old_b64`: Base64-encoded exact text to replace. If the decoded string is empty, this is treated as an insertion at the beginning of the file.
-  - `new_b64`: Base64-encoded replacement text.
-- Base64: RFC 4648. Whitespace is ignored; URL-safe variants (- and _) are accepted. Padding is optional.
+- Provide `file_path` and an array of `edits`.
+- Each edit has:
+  - `old_string`: The text to replace. Matching is robust to case and minor whitespace differences and uses multiple strategies (exact, trimmed, anchors, shrinking window, cross-line whitespace-collapsed substring, Tree-sitter when available, and normalised text). Provide a distinctive, contiguous block from the file. The order of edits is not important.
+  - `new_string`: The replacement text. If `old_string` cannot be found but `new_string` is already present, the edit is treated as already applied and is skipped (idempotent behaviour).
+- Insertion: set `old_string` to an empty string to insert new content without an explicit anchor. By default, the first such insertion goes to the top of the file; subsequent insertions (in the same run) append to the end.
 
 ## General File Handling
 
-- The tool creates directories if they do not exist, determined by `ensure_dir` (default: true).
-- Handles file creation if it doesn't exist by considering empty decoded `old_b64` as an insertion anchor or creating from scratch.
-- Automatically normalises line endings for consistent processing.
+- Uses in-memory buffer content when available (unsaved changes are respected).
+- Automatically normalises line endings for consistent processing (CRLF/CR → LF).
+- Preserves indentation: the replacement block is dedented to its minimal common indent, then re-indented to match the base indent of the target region, keeping relative indentation intact.
+- If the file does not exist, the tool can create it. When writing to disk (fallback), parent directories are created automatically.
 
-The tool will display an inline diff (UI) or write the file directly (headless).
+The tool will attempt to display an inline diff (UI). If a UI is not available, it writes the file content directly (headless).
 
 # FEATURES
 
-- Robust against JSON escaping issues: all payloads are base64-encoded, so embedded newlines/quotes/control characters are safe.
-- Batch multiple text replacements in one call, order-invariant application with overlap resolution.
-- Whitespace-insensitive matching fallback for robust edits (tolerant to indentation or line-ending differences).
-- Uses in-memory buffer content when available (unsaved changes are respected).
-- Idempotent behaviour: if the old block is not found but the new block already exists, the edit is skipped as already applied.
-- In UI mode, this tool shows an inline diff suggestion directly in the file. You can accept or reject hunks interactively:
-  - <ct>: accept theirs (apply suggested change)
-  - <co>: keep ours (revert suggestion)
-  - ]d / [d: next/previous hunk
-  - q: cancel review and restore original content
-- In headless mode (no UI), the tool auto-applies changes and returns a summary, a `diff` block, and diagnostics.
+- Order-invariant, multi-pass application (up to 3 passes):
+  - Finds non-overlapping matches left-to-right per pass.
+  - Overlapping or unresolved edits are deferred to the next pass.
+  - Edits already present are skipped without error.
+  - Unapplied edits after the final pass are reported but do not block applied ones.
+- Whitespace-insensitive and case-tolerant matching fallbacks for robust edits.
+- Uses current, unsaved buffer content when available.
+- Inline diff UI:
+  - Review and accept/reject hunks interactively:
+    - <ct>: accept theirs (apply suggested change)
+    - <co>: keep ours (revert suggestion)
+    - ]d / [d: next/previous hunk
+    - q: cancel review and restore original content
+- Headless behaviour (no UI attached):
+  - Automatically applies changes, writes to disk, and returns:
+    - A summary
+    - A unified `diff` block
+    - LSP diagnostics
+    - Machine-readable markers: `NeoAI-Diff-Hash` and `NeoAI-Diagnostics-Count`
 
 # OPERATION MODES
 
-- Operates in two modes depending on the availability of Neovim's UI components:
-  - **Inline mode**: Utilises Neovim UI for applying diffs interactively.
-  - **Headless mode**: Automatically approve and apply changes without requiring user interaction.
-
-# ERROR SURFACING
-
-- Invalid base64 is reported with the position of the first bad character or quartet.
-- Decoding failures abort the entire tool call with a clear message.
+- Inline mode: Utilises Neovim UI to show and apply diffs interactively.
+- Headless mode: If no UI is attached, applies and writes changes automatically.
 
 # LIMITATIONS
 
-- Text files only; no binary file manipulation.
-- Edits should be non-overlapping and unique within their ranges.
-- Requires Neovim APIs and appropriate permissions.
-
+- Text files only; no binary manipulation.
+- Ambiguous or duplicate contexts can cause matches to be skipped or deferred. Provide sufficiently distinctive `old_string` blocks to avoid ambiguity.
+- Some edits may remain unapplied after the final pass; they are reported with previews for troubleshooting.

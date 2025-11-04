@@ -134,15 +134,6 @@ M.meta = {
         type = "string",
         description = string.format("The path of the file to modify or create (relative to cwd %s)", vim.fn.getcwd()),
       },
-      ensure_dir = {
-        type = "boolean",
-        description = "Create parent directories if they do not exist (default: true)",
-      },
-      interactive_review = {
-        type = "boolean",
-        description =
-        "When false and a UI is present, do not open the inline diff UI yet; stage changes for a deferred review and do not write to disk. Only when no UI is present will changes be applied headlessly.",
-      },
       edits = {
         type = "array",
         description =
@@ -184,11 +175,15 @@ end
 ---@param args table: A table containing the file path and edits.
 ---@return string: A status message.
 M.run = function(args)
+  if type(args) ~= "table" then
+    return string.format("Edit tool: ignored call; arguments must be an object/table (got %s)", type(args))
+  end
+
   local rel_path = args.file_path
   local edits = args.edits
-  local force_headless = (args and args.interactive_review == false) or false
 
-  if type(rel_path) ~= "string" then
+  -- Gracefully ignore partial calls without spamming errors.
+  if type(rel_path) ~= "string" or type(edits) ~= "table" then
     local keys = {}
     if type(args) == "table" then
       for k, _ in pairs(args) do
@@ -196,19 +191,13 @@ M.run = function(args)
       end
       table.sort(keys)
     end
-    local msg = string.format(
-      "Edit tool error: 'file_path' must be a string (got %s), value: %s. Args keys: [%s]",
-      type(rel_path),
-      tostring(rel_path),
-      table.concat(keys, ", ")
+    local preview = ""
+    pcall(function() preview = vim.inspect(args) end)
+    return string.format(
+      "Edit tool: ignored call; expected 'file_path' (string) and 'edits' (array). Args keys: [%s]. Args preview: %s",
+      table.concat(keys, ", "),
+      preview
     )
-    vim.notify(msg, vim.log.levels.ERROR, { title = "NeoAI" })
-    return msg
-  end
-  if type(edits) ~= "table" then
-    local msg = string.format("Edit tool error: 'edits' must be an array/table (got %s)", type(edits))
-    vim.notify(msg, vim.log.levels.ERROR, { title = "NeoAI" })
-    return msg
   end
 
   for i, edit in ipairs(edits) do
@@ -224,7 +213,6 @@ M.run = function(args)
   local abs_path = cwd .. "/" .. rel_path
 
   local content
-  local file_exists = false
   local bufnr_from_list
   do
     local target = vim.fn.fnamemodify(abs_path, ":p")
@@ -234,7 +222,6 @@ M.run = function(args)
         if vim.fn.fnamemodify(name, ":p") == target then
           local lines = vim.api.nvim_buf_get_lines(b, 0, -1, false)
           content = table.concat(lines, "\n")
-          file_exists = true
           bufnr_from_list = b
           break
         end
@@ -243,7 +230,6 @@ M.run = function(args)
     if content == nil then
       local file = io.open(abs_path, "r")
       if file then
-        file_exists = true
         content = file:read("*a") or ""
         file:close()
       else
@@ -319,27 +305,22 @@ M.run = function(args)
   -- Preprocess edits into a pending list with decoded, split, normalised lines
   local pending = {}
   for i, edit in ipairs(edits) do
-    local old_dec, e1 = b64_decode(edit.old_b64)
-    if not old_dec then
-      local msg = string.format("Edit tool error: Edit %d old_b64 decode failed: %s", i, e1 or "unknown error")
-      vim.notify(msg, vim.log.levels.ERROR, { title = "NeoAI" })
-      return msg
+    local raw_old = normalise_eol(edit.old_string)
+    local is_insert = (raw_old == "")
+    local old_lines = is_insert and {} or split_lines(raw_old)
+    -- Robustness in case old_lines becomes {""}
+    if (not is_insert) and #old_lines == 1 and old_lines[1] == "" then
+      is_insert = true
+      old_lines = {}
     end
-    local new_dec, e2 = b64_decode(edit.new_b64)
-    if not new_dec then
-      local msg = string.format("Edit tool error: Edit %d new_b64 decode failed: %s", i, e2 or "unknown error")
-      vim.notify(msg, vim.log.levels.ERROR, { title = "NeoAI" })
-      return msg
-    end
-    local old_lines = split_lines(normalise_eol(old_dec))
-    local new_lines = split_lines(normalise_eol(new_dec))
+    local new_lines = split_lines(normalise_eol(edit.new_string))
     strip_cr(old_lines)
     strip_cr(new_lines)
     table.insert(pending, {
       index = i,
       old_lines = old_lines,
       new_lines = new_lines,
-      kind = (#old_lines == 0) and "insert" or "replace",
+      kind = is_insert and "insert" or "replace",
     })
   end
 
@@ -397,7 +378,6 @@ M.run = function(args)
           local ns, _ = finder.find_block_location(working_lines, item.new_lines, 1, nil)
           if ns then
             skipped_already_applied = skipped_already_applied + 1
-            total_replacements = total_replacements + 0
           else
             table.insert(next_pending, item)
           end
@@ -488,7 +468,7 @@ M.run = function(args)
       "Example (decoded) new block:",
       preview_new,
     }, "\n\n")
-    vim.notify("NeoAI Edit error:\n" .. verbose, vim.log.levels.ERROR, { title = "NeoAI" })
+    vim.notify("NeoAI Edit warning:\n" .. verbose, vim.log.levels.WARN, { title = "NeoAI" })
     -- Continue with applied changes; do not hard-fail the whole run
   end
 
@@ -512,162 +492,8 @@ M.run = function(args)
     end
   end
 
-  -- Decide whether to show the interactive inline diff or apply headlessly.
-  local uis = vim.api.nvim_list_uis()
-  local has_ui = uis and #uis > 0
-
-  -- If no UI is available at all, fall back to headless write-to-disk behaviour.
-  if not has_ui then
-    -- ... headless logic (no UI available)
-    local ensure_dir = args.ensure_dir
-    if ensure_dir == nil then
-      ensure_dir = true
-    end
-    if ensure_dir then
-      local dir = vim.fn.fnamemodify(abs_path, ":h")
-      vim.fn.mkdir(dir, "p")
-    end
-
-    local f, ferr = io.open(abs_path, "w")
-    if not f then
-      return "Failed to open file for writing: " .. tostring(ferr)
-    end
-    f:write(table.concat(updated_lines, "\n"))
-    f:close()
-
-    local summary
-    local skipped_note = ""
-    if skipped_already_applied > 0 then
-      skipped_note = string.format("; %d skipped as already applied", skipped_already_applied)
-    end
-    if file_exists then
-      summary = string.format(
-        "Applied %d replacement(s) to %s (auto-approved, headless)%s",
-        total_replacements,
-        rel_path,
-        skipped_note
-      )
-    else
-      summary = string.format(
-        "Created %s with %d replacement(s) (auto-approved, headless)%s",
-        rel_path,
-        total_replacements,
-        skipped_note
-      )
-    end
-    local diff_text = unified_diff(orig_lines, updated_lines)
-    local lsp_diag = require("neoai.ai_tools.lsp_diagnostic")
-    local diagnostics = lsp_diag.run({ file_path = abs_path, include_code_actions = false })
-
-    -- Compute a simple hash of the unified diff for orchestration
-    local function simple_hash(s)
-      s = s or ""
-      local h1, h2 = 0, 0
-      for i = 1, #s do
-        local b = string.byte(s, i)
-        h1 = (h1 + b) % 4294967296
-        h2 = (h2 * 31 + b) % 4294967296
-      end
-      return string.format("%08x%08x_%d", h1, h2, #s)
-    end
-    local diff_hash = simple_hash(diff_text)
-
-    -- In headless, wait for diagnostics to publish and then get the count
-    local diag_count = 0
-    pcall(lsp_diag.await_count, { file_path = abs_path, timeout_ms = 1500 })
-    local b = vim.fn.bufnr(abs_path, true)
-    if b > 0 then
-      pcall(vim.fn.bufload, b)
-      diag_count = #vim.diagnostic.get(b)
-    end
-
-    local parts = {
-      summary,
-      "Applied diff:",
-      utils.make_code_block(diff_text, "diff"),
-      diagnostics,
-      string.format("NeoAI-Diff-Hash: %s", diff_hash),
-      string.format("NeoAI-Diagnostics-Count: %d", diag_count),
-    }
-    return table.concat(parts, "\n\n")
-  end
-
-  -- UI is available. Respect interactive_review flag as a request to DEFER showing UI,
-  -- but never write to disk. Stage the changes for a later interactive review instead.
-  if force_headless then
-    local diff_text = unified_diff(orig_lines, updated_lines)
-    -- Compute a simple hash of the unified diff for orchestration
-    local function simple_hash(s)
-      s = s or ""
-      local h1, h2 = 0, 0
-      for i = 1, #s do
-        local b = string.byte(s, i)
-        h1 = (h1 + b) % 4294967296
-        h2 = (h2 * 31 + b) % 4294967296
-      end
-      return string.format("%08x%08x_%d", h1, h2, #s)
-    end
-    local diff_hash = simple_hash(diff_text)
-
-    local summary
-    local skipped_note = ""
-    if skipped_already_applied > 0 then
-      skipped_note = string.format("; %d skipped as already applied", skipped_already_applied)
-    end
-    if file_exists then
-      summary = string.format(
-        "Staged %d replacement(s) for %s (deferred review; not written)%s",
-        total_replacements,
-        rel_path,
-        skipped_note
-      )
-    else
-      summary = string.format(
-        "Staged new file %s with %d replacement(s) (deferred review; not written)%s",
-        rel_path,
-        total_replacements,
-        skipped_note
-      )
-    end
-
-    -- Compute diagnostics for the staged content without surfacing UI changes:
-    -- 1) Ensure a buffer exists for the target path.
-    local bufnr = bufnr_from_list or vim.fn.bufadd(abs_path)
-    -- 2) Load and capture current buffer state (to restore later).
-    pcall(vim.fn.bufload, bufnr)
-    local saved_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-    local saved_modified = vim.api.nvim_get_option_value("modified", { buf = bufnr })
-
-    -- 3) Apply staged content to the buffer, await diagnostics publish, then read diagnostics.
-    local diag_count = 0
-    local diagnostics_text = ""
-    local lsp_diag = require("neoai.ai_tools.lsp_diagnostic")
-    local ok_patch = pcall(function()
-      vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, updated_lines)
-    end)
-    if ok_patch then
-      pcall(lsp_diag.await_count, { bufnr = bufnr, timeout_ms = 1500 })
-      diagnostics_text = lsp_diag.run({ bufnr = bufnr, file_path = abs_path, include_code_actions = false })
-      diag_count = #vim.diagnostic.get(bufnr)
-    end
-
-    -- 4) Restore original buffer content and modified flag, so user-visible state is unchanged.
-    pcall(function()
-      vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, saved_lines)
-      vim.api.nvim_set_option_value("modified", saved_modified, { buf = bufnr })
-    end)
-
-    local parts = {
-      summary,
-      "Pending diff (staged):",
-      utils.make_code_block(diff_text, "diff"),
-      diagnostics_text,
-      string.format("NeoAI-Diff-Hash: %s", diff_hash),
-      string.format("NeoAI-Diagnostics-Count: %d", diag_count),
-    }
-    return table.concat(parts, "\n\n")
-  end
-
+  -- With a UI available, always open the inline diff and return diagnostics to drive the AI loop.
+  -- If inline diff application fails (e.g., no UI), fall back to writing the file.
   local ok, msg = utils.inline_diff.apply(abs_path, orig_lines, updated_lines)
   if ok then
     active_edit_state = {
@@ -719,15 +545,10 @@ M.run = function(args)
     -- Do not autosave here; wait for the user to review and write or cancel in the inline diff UI.
     return table.concat(parts, "\n\n")
   else
-    -- ... fallback write logic
-    local ensure_dir = args.ensure_dir
-    if ensure_dir == nil then
-      ensure_dir = true
-    end
-    if ensure_dir then
-      local dir = vim.fn.fnamemodify(abs_path, ":h")
-      vim.fn.mkdir(dir, "p")
-    end
+    -- Fallback write logic (ensures directories exist). Useful if the inline diff cannot be shown.
+    local dir = vim.fn.fnamemodify(abs_path, ":h")
+    pcall(vim.fn.mkdir, dir, "p")
+
     local f, ferr = io.open(abs_path, "w")
     if f then
       f:write(table.concat(updated_lines, "\n"))
@@ -737,6 +558,7 @@ M.run = function(args)
     return msg or ("Failed to open inline diff and could not write file: " .. tostring(ferr))
   end
 end
+
 --- Open an accumulated, deferred inline diff review for the given file.
 --- Shows a single review comparing the original baseline (before the first edit in the loop)
 --- to the latest content after the AI's iterations.
