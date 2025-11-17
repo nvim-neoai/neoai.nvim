@@ -49,15 +49,41 @@ function ui.open()
   end
 
   -- Create buffers
-  chat_state.buffers.chat = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(chat_state.buffers.chat, "neoai://chat")
+  -- Helper to find or create a buffer with a specific name
+  local function get_or_create_buffer(target_name)
+    -- First, try to find an existing buffer with this name
+    for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_is_valid(bufnr) then
+        local ok, name = pcall(vim.api.nvim_buf_get_name, bufnr)
+        if ok and name == target_name then
+          -- Found existing buffer - wipe it out and create fresh
+          pcall(vim.cmd, "bwipeout! " .. bufnr)
+          break
+        end
+      end
+    end
+    
+    -- Create new buffer
+    local bufnr = vim.api.nvim_create_buf(false, true)
+    
+    -- Try to set the name, if it fails use a fallback
+    local name_ok = pcall(vim.api.nvim_buf_set_name, bufnr, target_name)
+    if not name_ok then
+      -- Name still exists somehow, use timestamp suffix
+      local fallback_name = target_name .. "_" .. os.time()
+      pcall(vim.api.nvim_buf_set_name, bufnr, fallback_name)
+    end
+    
+    return bufnr
+  end
+
+  chat_state.buffers.chat = get_or_create_buffer("neoai://chat")
   vim.api.nvim_buf_set_option(chat_state.buffers.chat, "filetype", "markdown")
   vim.api.nvim_buf_set_option(chat_state.buffers.chat, "buftype", "nofile")
   vim.api.nvim_buf_set_option(chat_state.buffers.chat, "bufhidden", "wipe")
   vim.api.nvim_buf_set_option(chat_state.buffers.chat, "wrap", true)
 
-  chat_state.buffers.input = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(chat_state.buffers.input, "neoai://input")
+  chat_state.buffers.input = get_or_create_buffer("neoai://input")
   vim.api.nvim_buf_set_option(chat_state.buffers.input, "filetype", "markdown")
   vim.api.nvim_buf_set_option(chat_state.buffers.input, "buftype", "nofile")
   vim.api.nvim_buf_set_option(chat_state.buffers.input, "bufhidden", "wipe")
@@ -144,18 +170,17 @@ end
 --- Closes the NeoAI chat UI and cleans up the associated windows and buffers.
 ---@return nil
 function ui.close()
-  if not chat_state.is_open then
-    -- Even if the flag says closed, ensure we drop any stale handles
-    chat_state.windows = {}
-    chat_state.buffers = {}
-    chat_state.is_open = false
-    return
+  -- Close windows first
+  for _, win in pairs(chat_state.windows or {}) do
+    if vim.api.nvim_win_is_valid(win) then
+      pcall(vim.api.nvim_win_close, win, true)
+    end
   end
 
-  -- Close windows
-  for _, win in pairs(chat_state.windows) do
-    if vim.api.nvim_win_is_valid(win) then
-      vim.api.nvim_win_close(win, true)
+  -- Force delete buffers to clean up buffer names
+  for _, bufnr in pairs(chat_state.buffers or {}) do
+    if vim.api.nvim_buf_is_valid(bufnr) then
+      pcall(vim.cmd, "bwipeout! " .. bufnr)
     end
   end
 
