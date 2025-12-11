@@ -57,7 +57,7 @@ function ui.open()
         local ok, name = pcall(vim.api.nvim_buf_get_name, bufnr)
         if ok and name == target_name then
           -- Found existing buffer - wipe it out and create fresh
-          pcall(vim.cmd, "bwipeout! " .. bufnr)
+          pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
           break
         end
       end
@@ -180,7 +180,7 @@ function ui.close()
   -- Force delete buffers to clean up buffer names
   for _, bufnr in pairs(chat_state.buffers or {}) do
     if vim.api.nvim_buf_is_valid(bufnr) then
-      pcall(vim.cmd, "bwipeout! " .. bufnr)
+      pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
     end
   end
 

@@ -117,23 +117,29 @@ local function node_text(node, bufnr)
   if not ok then
     return nil
   end
-  if node == nil then
+  if node == nil or type(node.range) ~= "function" then
     return nil
   end
   local ok2, text = pcall(ts.get_node_text, node, bufnr)
   if ok2 then
     return text
   end
-  local sr, sc, er, ec = node:range()
+  local ok3, sr, sc, er, ec = pcall(node.range, node)
+  if not ok3 then
+    return nil
+  end
   local lines = vim.api.nvim_buf_get_text(bufnr, sr, sc, er, ec, {})
   return table.concat(lines, "\n")
 end
 
 local function make_range(node)
-  if not node then
+  if not node or type(node.range) ~= "function" then
     return nil
   end
-  local sr, sc, er, ec = node:range()
+  local ok, sr, sc, er, ec = pcall(node.range, node)
+  if not ok then
+    return nil
+  end
   return { start_line = sr + 1, start_col = sc + 1, end_line = er + 1, end_col = ec + 1 }
 end
 
@@ -441,14 +447,14 @@ local function python_docstring(func_or_class_node, bufnr)
     return nil
   end
   local first = body:named_child(0)
-  if not first then
+  if not first or type(first.type) ~= "function" then
     return nil
   end
   if first:type() ~= "expression_statement" then
     return nil
   end
   local inner = first:named_child(0) or first:child(0)
-  if not inner then
+  if not inner or type(inner.type) ~= "function" then
     return nil
   end
   if inner:type() ~= "string" then
@@ -642,7 +648,7 @@ local function extract_symbols_for_file(file_path, args)
             property_identifier = true,
           }
           local function walk(n, depth)
-            if not n or depth > 3 then
+            if not n or depth > 3 or type(n.type) ~= "function" then
               return nil
             end
             if wanted[n:type()] then
@@ -721,6 +727,9 @@ local function extract_symbols_for_file(file_path, args)
       local tsq_loc = get_query_for_group(lang, "locals")
       if tsq_loc then
         local function ascend_to_container(n)
+          if not n or type(n.type) ~= "function" then
+            return nil
+          end
           local want = {
             function_declaration = true,
             function_definition = true,
@@ -733,7 +742,7 @@ local function extract_symbols_for_file(file_path, args)
             interface_declaration = true,
           }
           local steps = 0
-          while n and steps < 6 do
+          while n and type(n.type) == "function" and steps < 6 do
             if want[n:type()] then
               return n
             end
