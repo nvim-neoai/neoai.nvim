@@ -3,6 +3,20 @@ local conf = require("neoai.config").get_api("main")
 local tool_schemas = require("neoai.ai_tools").tool_schemas
 local api = {}
 
+---Resolve the repository root from this module path.
+---@return string
+local function repo_root()
+  local src = debug.getinfo(1, "S").source
+  local file = src:sub(1, 1) == "@" and src:sub(2) or src
+  return vim.fn.fnamemodify(file, ":h:h:h")
+end
+
+---Resolve the node backend script path.
+---@return string
+local function backend_script_path()
+  return repo_root() .. "/backend/ai_backend.ts"
+end
+
 -- Track current streaming job
 --- @type Job|nil  -- Current streaming job
 local current_job = nil
@@ -33,7 +47,7 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
   local error_reported = false
   -- Buffer non-SSE stdout to recover JSON error bodies when the server doesn't stream
   local non_sse_buf = {}
-  local http_status -- captured from curl --write-out
+  local http_status -- captured from backend status trailer
   -- Create a new job and mark it as not cancelled
 
   local basic_payload = {
@@ -46,9 +60,13 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
 
   local payload = vim.fn.json_encode(merge_tables(basic_payload, conf.additional_kwargs or {}))
 
-  -- Optional debug: show the exact JSON payload being sent to curl
+  -- Optional debug: show the exact JSON payload being sent to the Node backend
   if conf.debug_payload then
-    vim.notify("NeoAI: Sending JSON payload to curl (stream):\n" .. payload, vim.log.levels.DEBUG, { title = "NeoAI" })
+    vim.notify(
+      "NeoAI: Sending JSON payload to Node backend (stream):\n" .. payload,
+      vim.log.levels.DEBUG,
+      { title = "NeoAI" }
+    )
   end
 
   -- Accumulate raw body for verbose error reporting in non-SSE cases
@@ -57,27 +75,17 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
   local api_key_header = conf.api_key_header or "Authorization"
   local api_key_format = conf.api_key_format or "Bearer %s"
   local api_key_value = string.format(api_key_format, conf.api_key)
-  local api_key = api_key_header .. ": " .. api_key_value
+  local backend_script = backend_script_path()
 
   current_job = Job:new({
-    command = "curl",
+    command = "node",
     args = {
-      "--silent",
-      "--show-error", -- ensure errors are printed even in silent mode
-      "--no-buffer",
-      "--location",
+      backend_script,
       conf.url,
-      "--header",
-      "Content-Type: application/json",
-      "--header",
-      api_key,
-      "--data-binary",
-      "@-",
-      -- Always emit the HTTP status code at the end so we can report it if no JSON error was parsed
-      "--write-out",
-      "\nHTTPSTATUS:%{http_code}\n",
+      api_key_header,
+      api_key_value,
     },
-    -- Send JSON payload via stdin to avoid hitting argv length limits
+    -- Send JSON payload via stdin to avoid hitting argv length limits.
     writer = payload,
     on_stdout = function(_, line)
       for _, data_line in ipairs(vim.split(line, "\n")) do
@@ -191,7 +199,7 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
         else
           -- Non-SSE output: capture HTTP status and buffer any JSON body to surface real error messages
           local trimmed = vim.trim(data_line)
-          -- Capture the emitted HTTP status code from curl
+          -- Capture the emitted HTTP status code from the backend trailer
           local st = trimmed:match("^HTTPSTATUS:(%d+)$")
           if st then
             http_status = tonumber(st)
@@ -243,11 +251,10 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
       if not line or line == "" then
         return
       end
-      -- With --show-error, curl writes human-readable errors here. Surface immediately for network/transport errors.
       if not error_reported then
         error_reported = true
         vim.schedule(function()
-          local verbose = "curl error: " .. tostring(line)
+          local verbose = "Node backend error: " .. tostring(line)
           vim.notify(verbose, vim.log.levels.ERROR, { title = "NeoAI" })
           on_error(verbose)
         end)
@@ -263,9 +270,9 @@ function api.stream(messages, on_chunk, on_complete, on_error, on_cancel)
               on_cancel()
             end
           else
-            -- If curl failed at the transport level
+            -- If the process failed at the transport/backend level
             if exit_code ~= 0 then
-              local verbose = "curl exited with code: " .. tostring(exit_code)
+              local verbose = "Node backend exited with code: " .. tostring(exit_code)
               vim.notify(verbose, vim.log.levels.ERROR, { title = "NeoAI" })
               on_error(verbose)
             else
@@ -302,7 +309,7 @@ function api.cancel()
   -- Mark this specific job as cancelled
   job._neoai_cancelled = true
 
-  -- For curl SSE, closing pipes (shutdown) is not sufficient; send a signal.
+  -- For streamed requests, closing pipes (shutdown) is not sufficient; send a signal.
   -- Try SIGTERM first; if it doesn't exit quickly, escalate to SIGKILL.
   if type(job.kill) == "function" then
     pcall(function()
