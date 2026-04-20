@@ -9,6 +9,7 @@ A powerful AI-enhanced chat interface for Neovim, featuring streaming responses,
 - **Interactive Chat UI**: Split-window chat interface with Markdown rendering and model name display
 - **Session Management**: Telescope-powered session picker for easy navigation
 - **Streaming Responses**: Real-time assistant replies with thinking time indicator and response duration
+- **Headless Node.js Backend**: API calls are proxied through a lightweight Node.js backend script (`backend/ai_backend.ts`)
 - **Advanced Tool System**: Automatic invocation of tools with intelligent feedback loops
   - Project structure analysis
   - File reading and intelligent multi-edit operations
@@ -97,6 +98,9 @@ use {
 
 - ripgrep (rg): required for the Grep and Project Structure tools.
 - nvim-treesitter: For TreeSitterQuery and edit tool; ensure language parsers are installed (e.g., `:TSInstall lua`).
+- Node.js 18+ (recommended 20+): required for the headless AI backend (`fetch` + streaming).
+
+No Java runtime/backend is required.
 
 Note on models:
 

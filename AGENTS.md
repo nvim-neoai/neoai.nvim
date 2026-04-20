@@ -16,6 +16,8 @@ Conversation shaping for tools:
 
 Key components:
 - lua/neoai/chat.lua — Chat UI, message orchestration, tool invocation, response streaming
+- lua/neoai/api.lua — Lua-side stream orchestration; delegates HTTP transport to Node backend
+- backend/ai_backend.ts — Headless Node.js transport backend for AI API calls/streaming
 - lua/neoai/prompt.lua — Template loading and interpolation for the system prompt
 - lua/neoai/prompts/system_prompt.md — System instructions and placeholders (%tools, %agents)
 - lua/neoai/ai_tools/** — Tool implementations and their descriptions
@@ -48,6 +50,7 @@ Tool output notes:
 ## Dev environment tips
 - Use a local path in your Neovim plugin manager (e.g., lazy.nvim) to load this repository directly during development.
 - Required dependencies: plenary.nvim, telescope.nvim, and optionally nvim-treesitter for TreeSitterQuery; ripgrep (rg) for Grep/ProjectStructure.
+- Node.js 18+ is required for the headless API backend (`backend/ai_backend.ts`); Java is not required.
 - Recommended Neovim: v0.8+.
 - Configure two API profiles in setup: api.main and api.small. The main model is currently used for chat responses.
 - Logging: prefer vim.notify with appropriate severity (DEBUG/INFO/WARN/ERROR) for internal diagnostics; keep noise minimal by default.
@@ -102,7 +105,6 @@ Tool output notes:
 - This file is auto-included into the system prompt at runtime.
 - If you change any of the topics addressed here (overview, commands, code style, testing, security, PR process), update this file as part of the same change.
 - Do not bloat this file; include information that materially improves the agent’s effectiveness working on this repository.
-
 
 
 
